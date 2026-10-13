@@ -1,0 +1,231 @@
+import "server-only";
+import { cache } from "react";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { connection } from "next/server";
+import { isSupabaseAuthEnabled } from "@/lib/auth/config";
+import { staffRoutePermissions } from "@/lib/auth/routes";
+import { primaryUserRole, type ServerSessionUser } from "@/lib/auth/session-user";
+import { createSupabaseServerClient, hasSupabaseSessionCookie } from "@/server/supabase";
+import { pinUserId, withIdentityDb } from "@/server/db/tenant";
+import { AuthError, isAuthError } from "@/server/auth/errors";
+import { recordAuditEvent } from "@/server/audit";
+import { findOrLinkUser } from "@/server/auth/link-user";
+import {
+  createAuthService,
+  homeFor,
+  hasAnyPermission,
+  noMembershipDestination,
+  type AuthUserLookup,
+  type Identity,
+  type PatientContext,
+  type RoleKey,
+  type TenantContext,
+  type VerifiedAuthUser,
+} from "@/server/auth/authorize";
+
+/** Cookie holding the user's preferred clinic. A hint only — always re-validated against memberships. */
+export const ACTIVE_CLINIC_COOKIE = "sehat_active_clinic";
+
+/** Asks the Supabase Auth server who the session belongs to (validates the JWT; never trusts cookie contents alone). */
+async function getAuthUser(): Promise<AuthUserLookup> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.auth.getUser();
+  if (data.user) {
+    return { status: "ok", user: { id: data.user.id, email: data.user.email ?? null, emailConfirmed: Boolean(data.user.email_confirmed_at) } };
+  }
+  if (error?.name === "AuthRetryableFetchError") throw new AuthError("AUTH_UNAVAILABLE");
+  return { status: (await hasSupabaseSessionCookie()) ? "expired" : "none" };
+}
+
+/**
+ * Maps a verified Supabase user to the application User and memberships,
+ * linking an INVITED user on first sign-in by confirmed email (via the
+ * app.link_auth_user SECURITY DEFINER function).
+ */
+async function loadIdentity(authUser: VerifiedAuthUser): Promise<Identity | null> {
+  let justLinked = false;
+  const identity = await withIdentityDb(authUser.id, async (tx) => {
+    const select = { id: true, email: true, name: true, status: true, authProviderId: true } as const;
+    const { user, linkedNow } = await findOrLinkUser(authUser, {
+      findByAuthId: () => tx.user.findUnique({ where: { authProviderId: authUser.id }, select }),
+      link: async () => {
+        const [{ linked }] = await tx.$queryRaw<{ linked: string | null }[]>`SELECT app.link_auth_user(${authUser.id}, ${authUser.email})::text AS linked`;
+        return linked;
+      },
+    });
+    justLinked = linkedNow;
+    if (!user || user.authProviderId !== authUser.id) return null;
+
+    await pinUserId(tx, user.id);
+    const memberships = await tx.clinicMembership.findMany({
+      where: { userId: user.id },
+      select: {
+        id: true,
+        clinicId: true,
+        branchId: true,
+        status: true,
+        clinic: { select: { name: true, status: true } },
+        role: { select: { key: true, permissions: { select: { permission: { select: { key: true } } } } } },
+      },
+    });
+
+    // Own rows only (RLS: doctor_profiles/patients where userId = this user).
+    const doctorProfiles = await tx.doctorProfile.findMany({ where: { userId: user.id, status: "ACTIVE" }, select: { id: true, clinicId: true } });
+    const patientLinks = await tx.patient.findMany({ where: { userId: user.id, status: "ACTIVE" }, select: { id: true, clinicId: true } });
+
+    return {
+      userId: user.id,
+      authUserId: authUser.id,
+      email: user.email,
+      verifiedEmail: authUser.emailConfirmed && authUser.email ? authUser.email.trim().toLowerCase() : null,
+      name: user.name,
+      status: user.status,
+      doctorProfiles,
+      patientLinks: patientLinks.map((p) => ({ patientId: p.id, clinicId: p.clinicId })),
+      memberships: memberships.map((m) => ({
+        id: m.id,
+        clinicId: m.clinicId,
+        clinicName: m.clinic.name,
+        clinicStatus: m.clinic.status,
+        branchId: m.branchId,
+        roleKey: m.role.key as RoleKey,
+        status: m.status,
+        permissions: m.role.permissions.map((rp) => rp.permission.key),
+      })),
+    };
+  });
+  if (justLinked && identity) {
+    await recordAuditEvent({ action: "auth.account_linked", outcome: "SUCCESS", actor: { userId: identity.userId, authUserId: authUser.id }, targetType: "user", targetId: identity.userId });
+  }
+  return identity;
+}
+
+const authService = createAuthService({
+  isConfigured: isSupabaseAuthEnabled,
+  getAuthUser,
+  loadIdentity,
+  getRequestedClinicId: async () => (await cookies()).get(ACTIVE_CLINIC_COOKIE)?.value,
+});
+
+// cache(): resolve the session at most once per request, however many
+// layouts, pages, and data helpers ask for it.
+export const requireIdentity = cache(() => authService.requireIdentity());
+export const requireStaffContext = cache(() => authService.requireStaffContext());
+export const requirePatientIdentity = cache(() => authService.requirePatientIdentity());
+export const requirePatientContext = cache(() => authService.requirePatientContext());
+
+/** Audit an authorization failure (unauthenticated visits are not logged — the proxy turns those away). */
+async function auditDenied(err: AuthError, resource: string): Promise<void> {
+  if (err.code === "AUTH_NOT_CONFIGURED" || err.code === "UNAUTHENTICATED") return;
+  const identity = await requireIdentity().catch(() => null);
+  await recordAuditEvent({
+    action: "access.denied",
+    outcome: "DENIED",
+    actor: { userId: identity?.userId, authUserId: identity?.authUserId },
+    targetType: "route",
+    targetId: resource.slice(0, 128),
+    reason: err.code,
+  });
+}
+
+/** For Route Handlers and Server Actions: the verified staff context, optionally requiring a permission. */
+export async function requireStaff(permission?: string | readonly string[], resource = "server-operation"): Promise<TenantContext> {
+  try {
+    const ctx = await requireStaffContext();
+    if (permission !== undefined && !hasAnyPermission(ctx, typeof permission === "string" ? [permission] : permission)) {
+      throw new AuthError("FORBIDDEN");
+    }
+    return ctx;
+  } catch (err) {
+    if (isAuthError(err)) await auditDenied(err, resource);
+    throw err;
+  }
+}
+
+/** Where to send a page request that failed authentication/authorization. */
+export function authErrorDestination(err: AuthError, nextPath?: string): string {
+  const next = nextPath ? `&next=${encodeURIComponent(nextPath)}` : "";
+  switch (err.code) {
+    case "UNAUTHENTICATED":
+      return `/login?reason=signin${next}`;
+    case "SESSION_EXPIRED":
+      return `/login?reason=expired${next}`;
+    default:
+      return `/access-denied?reason=${err.code.toLowerCase()}`;
+  }
+}
+
+/** Pending (or expired, still-pending) invitations for the verified session — never for a browser-supplied email. */
+async function countPendingInvitations(identity: Identity & { verifiedEmail: string }): Promise<number> {
+  // Imported lazily: the data layer depends on this module's neighbours.
+  const { listMyInvitations } = await import("@/server/data/invitations");
+  return (await listMyInvitations(identity)).items.length;
+}
+
+/**
+ * For a signed-in user who has no staff membership: where to send them instead of
+ * Access Denied (their invitation, or the patient portal), or null.
+ */
+export async function noMembershipRedirect(): Promise<string | null> {
+  const identity = await requireIdentity().catch(() => null);
+  return identity ? noMembershipDestination(identity, countPendingInvitations) : null;
+}
+
+function redirectOnAuthError(err: unknown, nextPath?: string): never {
+  if (isAuthError(err)) redirect(authErrorDestination(err, nextPath));
+  throw err;
+}
+
+/**
+ * Server-layout guard for a staff route segment. In demo mode (Supabase not
+ * configured) it does nothing — that mode serves only fictional client-side
+ * mock data, and every database helper refuses to run without a verified session.
+ */
+export async function guardStaffRoute(pathname: string | null): Promise<TenantContext | null> {
+  // Always render protected pages per request — never serve a build-time
+  // prerender that skipped this check.
+  await connection();
+  if (!isSupabaseAuthEnabled()) return null;
+  // null = the staff shell itself: any active staff membership will do.
+  const required = pathname === null ? [] : staffRoutePermissions(pathname);
+  try {
+    const ctx = await requireStaffContext();
+    if (required === undefined || !hasAnyPermission(ctx, required)) throw new AuthError("FORBIDDEN");
+    return ctx;
+  } catch (err) {
+    if (isAuthError(err) && err.code === "NO_MEMBERSHIP") {
+      // Not a member (yet): someone with a pending invitation — e.g. a new invitee
+      // who just set their password — goes to accept it; a patient goes to the portal.
+      const destination = await noMembershipRedirect();
+      if (destination) redirect(destination);
+    }
+    if (isAuthError(err)) await auditDenied(err, pathname ?? "/dashboard");
+    redirectOnAuthError(err, pathname ?? "/dashboard");
+  }
+}
+
+/** The verified identity summary handed to the client shell (or null in demo mode). */
+export function toServerSessionUser(ctx: TenantContext): ServerSessionUser {
+  return { userId: ctx.userId, name: ctx.name, email: ctx.email, role: primaryUserRole(ctx.roles), clinicName: ctx.clinicName };
+}
+
+export function toPortalSessionUser(ctx: PatientContext): ServerSessionUser {
+  return { userId: ctx.userId, name: ctx.name, email: ctx.email, role: "patient", clinicName: ctx.clinicName };
+}
+
+/** Server-layout guard for the patient portal. */
+export async function guardPortalRoute(): Promise<PatientContext | null> {
+  await connection();
+  if (!isSupabaseAuthEnabled()) return null;
+  try {
+    return await requirePatientContext();
+  } catch (err) {
+    if (isAuthError(err) && err.code === "NO_MEMBERSHIP") {
+      const identity = await requireIdentity().catch(() => null);
+      if (identity && homeFor(identity) === "staff") redirect("/dashboard");
+    }
+    if (isAuthError(err)) await auditDenied(err, "/portal");
+    redirectOnAuthError(err, "/portal");
+  }
+}

@@ -1,0 +1,889 @@
+// Sehat Setu — Prisma schema (Prisma 7).
+//
+// Connection URLs are NOT configured here: in Prisma 7 the CLI reads its URL
+// from prisma.config.ts (DIRECT_URL), and the app connects at runtime through
+// the pg driver adapter in src/server/prisma.ts (DATABASE_URL).
+//
+// Multi-tenancy: every tenant-owned row carries `clinicId`. Relations between
+// tenant-owned rows use COMPOSITE foreign keys over (clinicId, id), so the
+// database itself rejects e.g. an appointment whose branch, patient, or doctor
+// belongs to a different clinic. This guarantees consistency only — it does
+// not authorize anyone. Server-side queries must still scope every read and
+// write to the caller's clinic/branch, and Row-Level Security policies are
+// still to be written before any real patient data is stored.
+//
+// Money is stored as integer paise (1 INR = 100 paise) to avoid floating-point
+// rounding. Deletion rules default to Restrict: clinical and billing records
+// must never disappear as a side effect of deleting a parent row. Only pure
+// child rows (line items, join rows) cascade with their parent.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum ClinicStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum RecordStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  DISABLED
+}
+
+enum RoleKey {
+  ADMINISTRATOR
+  CLINIC_MANAGER
+  DOCTOR
+  RECEPTIONIST
+  NURSE
+  PATIENT
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum PatientStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum AppointmentType {
+  IN_PERSON
+  ONLINE
+  FOLLOW_UP
+  WALK_IN
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  CHECKED_IN
+  IN_CONSULTATION
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum ConsultationStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum PrescriptionStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum DosageForm {
+  TABLET
+  CAPSULE
+  SYRUP
+  INJECTION
+  OINTMENT
+  DROPS
+  INHALER
+  // Added by migration 20261018000000_dosage_forms
+  CREAM
+  GEL
+  LOTION
+  SUSPENSION
+  POWDER
+  SACHET
+}
+
+enum InvoiceStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  VOID
+}
+
+enum LineItemCategory {
+  CONSULTATION
+  MEDICINE
+  LAB_TEST
+  PROCEDURE
+  OTHER
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+  BANK_TRANSFER
+  ONLINE
+}
+
+enum PaymentStatus {
+  SUCCEEDED
+  PENDING
+  FAILED
+  REFUNDED
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy: Clinic -> Branch -> Department
+// ---------------------------------------------------------------------------
+
+model Clinic {
+  id          String       @id @default(uuid()) @db.Uuid
+  code        String       @unique
+  name        String
+  email       String
+  phone       String
+  addressLine String
+  city        String
+  state       String
+  pincode     String
+  /// Brand accent colour (hex) for clinic-branded UI.
+  brandColor  String?
+  currency    String       @default("INR")
+  status      ClinicStatus @default(ACTIVE)
+  createdAt   DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @db.Timestamptz(6)
+
+  branches       Branch[]
+  departments    Department[]
+  memberships    ClinicMembership[]
+  doctorProfiles DoctorProfile[]
+  doctorBranches DoctorBranch[]
+  patients       Patient[]
+  appointments   Appointment[]
+  consultations  Consultation[]
+  prescriptions  Prescription[]
+  invoices       Invoice[]
+  payments       Payment[]
+  inventoryItems InventoryItem[]
+  reorderLevels  InventoryReorderLevel[]
+
+  @@map("clinics")
+}
+
+model Branch {
+  id           String       @id @default(uuid()) @db.Uuid
+  clinicId     String       @db.Uuid
+  code         String
+  name         String
+  addressLine  String
+  city         String
+  phone        String
+  email        String?
+  isHeadOffice Boolean      @default(false)
+  status       RecordStatus @default(ACTIVE)
+  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
+
+  clinic           Clinic                  @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  departments      Department[]
+  memberships      ClinicMembership[]
+  doctorBranches   DoctorBranch[]
+  patients         Patient[]
+  appointments     Appointment[]
+  invoices         Invoice[]
+  inventoryItems   InventoryItem[]
+  reorderLevels    InventoryReorderLevel[]
+  staffInvitations StaffInvitation[]
+
+  @@unique([clinicId, code])
+  @@unique([clinicId, id])
+  @@map("branches")
+}
+
+model Specialty {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  departments       Department[]
+  doctorProfiles    DoctorProfile[]
+  invitationDetails StaffInvitationDoctorDetails[]
+
+  @@map("specialties")
+}
+
+model Department {
+  id          String       @id @default(uuid()) @db.Uuid
+  clinicId    String       @db.Uuid
+  /// Null for clinic-wide departments; set when the department is branch-specific.
+  branchId    String?      @db.Uuid
+  specialtyId String?      @db.Uuid
+  name        String
+  description String?
+  status      RecordStatus @default(ACTIVE)
+  createdAt   DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @db.Timestamptz(6)
+
+  clinic         Clinic          @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  branch         Branch?         @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
+  specialty      Specialty?      @relation(fields: [specialtyId], references: [id], onDelete: SetNull)
+  doctorProfiles DoctorProfile[]
+
+  @@unique([clinicId, id])
+  @@index([clinicId, branchId])
+  @@map("departments")
+}
+
+// ---------------------------------------------------------------------------
+// Identity, roles & permissions
+// ---------------------------------------------------------------------------
+
+/// A person who can (eventually) sign in. Holds no password: credentials live
+/// with the authentication provider, linked via `authProviderId`.
+model User {
+  id             String     @id @default(uuid()) @db.Uuid
+  email          String     @unique
+  name           String
+  phone          String?
+  status         UserStatus @default(INVITED)
+  /// The auth provider's user id (e.g. Supabase Auth `auth.users.id`). Null until the account is provisioned.
+  authProviderId String?    @unique
+  createdAt      DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime   @updatedAt @db.Timestamptz(6)
+
+  memberships     ClinicMembership[]
+  stockMovements  StockMovement[]
+  doctorProfile   DoctorProfile?
+  patient         Patient?
+  invitationsSent StaffInvitation[]  @relation("InvitationInviter")
+
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         RoleKey  @unique
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  permissions      RolePermission[]
+  memberships      ClinicMembership[]
+  staffInvitations StaffInvitation[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid()) @db.Uuid
+  /// Dot-delimited key, e.g. "patient.view" — matches src/data/permission-catalog.ts.
+  key         String   @unique
+  name        String
+  module      String
+  description String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+/// Grants a user a role within one clinic, optionally limited to one branch.
+/// Authorization decisions resolve the caller's clinic/branch scope from here.
+model ClinicMembership {
+  id        String       @id @default(uuid()) @db.Uuid
+  userId    String       @db.Uuid
+  clinicId  String       @db.Uuid
+  /// Null = clinic-wide access; set = restricted to this branch.
+  branchId  String?      @db.Uuid
+  roleId    String       @db.Uuid
+  status    RecordStatus @default(ACTIVE)
+  createdAt DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime     @updatedAt @db.Timestamptz(6)
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clinic Clinic  @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  branch Branch? @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
+  role   Role    @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, clinicId, roleId])
+  @@index([clinicId, branchId])
+  @@map("clinic_memberships")
+}
+
+// ---------------------------------------------------------------------------
+// Doctors
+// ---------------------------------------------------------------------------
+
+model DoctorProfile {
+  id                   String       @id @default(uuid()) @db.Uuid
+  userId               String       @unique @db.Uuid
+  clinicId             String       @db.Uuid
+  specialtyId          String       @db.Uuid
+  departmentId         String?      @db.Uuid
+  qualifications       String
+  registrationNumber   String
+  experienceYears      Int
+  consultationFeePaise Int
+  bio                  String?
+  onlineConsultation   Boolean      @default(false)
+  status               RecordStatus @default(ACTIVE)
+  createdAt            DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime     @updatedAt @db.Timestamptz(6)
+
+  user         User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  clinic       Clinic         @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  specialty    Specialty      @relation(fields: [specialtyId], references: [id], onDelete: Restrict)
+  department   Department?    @relation(fields: [clinicId, departmentId], references: [clinicId, id], onDelete: Restrict)
+  branches     DoctorBranch[]
+  appointments Appointment[]
+
+  @@unique([clinicId, id])
+  @@unique([clinicId, registrationNumber])
+  @@index([clinicId, specialtyId])
+  @@map("doctor_profiles")
+}
+
+/// Which branches a doctor practises at (a doctor can cover several).
+model DoctorBranch {
+  doctorId  String   @db.Uuid
+  branchId  String   @db.Uuid
+  clinicId  String   @db.Uuid
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  clinic Clinic        @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  doctor DoctorProfile @relation(fields: [clinicId, doctorId], references: [clinicId, id], onDelete: Cascade)
+  branch Branch        @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Cascade)
+
+  @@id([doctorId, branchId])
+  @@index([clinicId, branchId])
+  @@map("doctor_branches")
+}
+
+// ---------------------------------------------------------------------------
+// Patients
+// ---------------------------------------------------------------------------
+
+/// Patients are clinic-scoped records: the same person visiting two clinics
+/// has one record per clinic, so each clinic only ever sees its own data.
+model Patient {
+  id                    String        @id @default(uuid()) @db.Uuid
+  clinicId              String        @db.Uuid
+  /// Branch where the patient registered.
+  branchId              String        @db.Uuid
+  /// Optional link to a patient-portal login.
+  userId                String?       @unique @db.Uuid
+  /// Human-facing number, unique within the clinic, e.g. "AAR-P-00012".
+  patientNumber         String
+  name                  String
+  dateOfBirth           DateTime      @db.Date
+  gender                Gender
+  phone                 String
+  email                 String?
+  bloodGroup            String?
+  addressLine           String?
+  city                  String?
+  allergies             String[]
+  chronicConditions     String[]
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  status                PatientStatus @default(ACTIVE)
+  createdAt             DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime      @updatedAt @db.Timestamptz(6)
+
+  clinic       Clinic        @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  branch       Branch        @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  appointments Appointment[]
+  invoices     Invoice[]
+
+  @@unique([clinicId, patientNumber])
+  @@unique([clinicId, id])
+  @@index([clinicId, name])
+  @@index([clinicId, phone])
+  @@map("patients")
+}
+
+// ---------------------------------------------------------------------------
+// Appointments & clinical records
+// ---------------------------------------------------------------------------
+
+model Appointment {
+  id              String            @id @default(uuid()) @db.Uuid
+  clinicId        String            @db.Uuid
+  branchId        String            @db.Uuid
+  patientId       String            @db.Uuid
+  doctorId        String            @db.Uuid
+  startsAt        DateTime          @db.Timestamptz(6)
+  durationMinutes Int               @default(30)
+  type            AppointmentType   @default(IN_PERSON)
+  status          AppointmentStatus @default(SCHEDULED)
+  reason          String
+  notes           String?
+  checkedInAt     DateTime?         @db.Timestamptz(6)
+  cancelledAt     DateTime?         @db.Timestamptz(6)
+  createdAt       DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime          @updatedAt @db.Timestamptz(6)
+
+  clinic       Clinic        @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  branch       Branch        @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
+  patient      Patient       @relation(fields: [clinicId, patientId], references: [clinicId, id], onDelete: Restrict)
+  doctor       DoctorProfile @relation(fields: [clinicId, doctorId], references: [clinicId, id], onDelete: Restrict)
+  consultation Consultation?
+  invoice      Invoice?
+
+  @@unique([clinicId, id])
+  @@index([clinicId, startsAt])
+  @@index([clinicId, branchId, startsAt])
+  @@index([doctorId, startsAt])
+  @@index([patientId, startsAt])
+  @@map("appointments")
+}
+
+model Consultation {
+  id              String             @id @default(uuid()) @db.Uuid
+  clinicId        String             @db.Uuid
+  appointmentId   String             @db.Uuid
+  chiefComplaint  String
+  notes           String?
+  diagnosis       String[]
+  symptoms        String[]           @default([])
+  history         String?
+  allergiesNoted  String[]           @default([])
+  /// Measured vitals as a small JSON object (keys validated by src/server/data/clinical.ts).
+  vitals          Json?
+  examination     String?
+  treatmentPlan   String?
+  labTestsOrdered String[]           @default([])
+  followUpDate    DateTime?          @db.Date
+  status          ConsultationStatus @default(IN_PROGRESS)
+  completedAt     DateTime?          @db.Timestamptz(6)
+  createdAt       DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime           @updatedAt @db.Timestamptz(6)
+
+  clinic        Clinic         @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  appointment   Appointment    @relation(fields: [clinicId, appointmentId], references: [clinicId, id], onDelete: Restrict)
+  prescriptions Prescription[]
+
+  @@unique([clinicId, appointmentId])
+  @@unique([clinicId, id])
+  @@index([clinicId, createdAt])
+  @@map("consultations")
+}
+
+/// Global medicine catalog (not tenant-owned). The runtime role can only read
+/// it; administrators add entries through app.create_catalog_medicine()
+/// (migration 20261018000100). Duplicates of the normalised name + strength +
+/// dosage form are blocked by the expression index medicines_normalized_key,
+/// which Prisma can't express.
+model Medicine {
+  id          String     @id @default(uuid()) @db.Uuid
+  name        String
+  genericName String
+  strength    String
+  dosageForm  DosageForm
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime   @updatedAt @db.Timestamptz(6)
+
+  prescriptionItems PrescriptionItem[]
+  inventoryItems    InventoryItem[]
+  reorderLevels     InventoryReorderLevel[]
+
+  @@unique([name, strength, dosageForm])
+  @@map("medicines")
+}
+
+model Prescription {
+  id                 String             @id @default(uuid()) @db.Uuid
+  clinicId           String             @db.Uuid
+  consultationId     String             @db.Uuid
+  /// Human-facing number, unique within the clinic.
+  prescriptionNumber String
+  status             PrescriptionStatus @default(ACTIVE)
+  notes              String?
+  issuedAt           DateTime           @db.Timestamptz(6)
+  createdAt          DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime           @updatedAt @db.Timestamptz(6)
+
+  clinic       Clinic             @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  consultation Consultation       @relation(fields: [clinicId, consultationId], references: [clinicId, id], onDelete: Restrict)
+  items        PrescriptionItem[]
+
+  @@unique([clinicId, prescriptionNumber])
+  @@index([consultationId])
+  @@index([clinicId, issuedAt])
+  @@map("prescriptions")
+}
+
+model PrescriptionItem {
+  id             String  @id @default(uuid()) @db.Uuid
+  prescriptionId String  @db.Uuid
+  medicineId     String  @db.Uuid
+  /// e.g. "1 tablet"
+  dosage         String
+  /// e.g. "Twice daily"
+  frequency      String
+  durationDays   Int
+  instructions   String?
+  /// e.g. "Oral", "Topical"
+  route          String?
+
+  prescription Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  medicine     Medicine     @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+
+  @@index([prescriptionId])
+  @@map("prescription_items")
+}
+
+// ---------------------------------------------------------------------------
+// Billing
+// ---------------------------------------------------------------------------
+
+model Invoice {
+  id            String        @id @default(uuid()) @db.Uuid
+  clinicId      String        @db.Uuid
+  branchId      String        @db.Uuid
+  patientId     String        @db.Uuid
+  appointmentId String?       @db.Uuid
+  /// Human-facing number, unique within the clinic, e.g. "AAR-INV-2026-0001".
+  invoiceNumber String
+  issuedAt      DateTime      @db.Timestamptz(6)
+  dueDate       DateTime?     @db.Date
+  subtotalPaise Int
+  discountPaise Int           @default(0)
+  taxPaise      Int           @default(0)
+  totalPaise    Int
+  status        InvoiceStatus @default(PENDING)
+  createdAt     DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime      @updatedAt @db.Timestamptz(6)
+
+  clinic      Clinic            @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  branch      Branch            @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
+  patient     Patient           @relation(fields: [clinicId, patientId], references: [clinicId, id], onDelete: Restrict)
+  appointment Appointment?      @relation(fields: [clinicId, appointmentId], references: [clinicId, id], onDelete: Restrict)
+  lineItems   InvoiceLineItem[]
+  payments    Payment[]
+
+  @@unique([clinicId, appointmentId])
+  @@unique([clinicId, invoiceNumber])
+  @@unique([clinicId, id])
+  @@index([clinicId, issuedAt])
+  @@index([clinicId, status])
+  @@index([patientId])
+  @@map("invoices")
+}
+
+model InvoiceLineItem {
+  id             String           @id @default(uuid()) @db.Uuid
+  invoiceId      String           @db.Uuid
+  description    String
+  category       LineItemCategory
+  quantity       Int
+  unitPricePaise Int
+  amountPaise    Int
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("invoice_line_items")
+}
+
+model Payment {
+  id          String        @id @default(uuid()) @db.Uuid
+  clinicId    String        @db.Uuid
+  invoiceId   String        @db.Uuid
+  amountPaise Int
+  method      PaymentMethod
+  status      PaymentStatus @default(SUCCEEDED)
+  reference   String?
+  paidAt      DateTime      @db.Timestamptz(6)
+  createdAt   DateTime      @default(now()) @db.Timestamptz(6)
+
+  clinic  Clinic  @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  invoice Invoice @relation(fields: [clinicId, invoiceId], references: [clinicId, id], onDelete: Restrict)
+
+  @@index([invoiceId])
+  @@index([clinicId, paidAt])
+  @@map("payments")
+}
+
+// ---------------------------------------------------------------------------
+// Inventory (migration 20261017000000_inventory)
+// ---------------------------------------------------------------------------
+
+enum StockMovementType {
+  RECEIPT
+  ADJUSTMENT
+  REVERSAL
+}
+
+/// Stock of one batch of a catalogue medicine at one branch. quantityOnHand
+/// changes only through stock_movements (trigger app.apply_stock_movement);
+/// the runtime role has no write access to it.
+/// Unique per (clinic, branch, medicine, lower(trim(batchNumber))) — SQL index.
+model InventoryItem {
+  id             String   @id @default(uuid()) @db.Uuid
+  clinicId       String   @db.Uuid
+  branchId       String   @db.Uuid
+  medicineId     String   @db.Uuid
+  batchNumber    String
+  expiryDate     DateTime @db.Date
+  quantityOnHand Int      @default(0)
+  unitCostPaise  Int?
+  supplierName   String?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  clinic    Clinic          @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  branch    Branch          @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
+  medicine  Medicine        @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+  movements StockMovement[]
+
+  @@unique([clinicId, id])
+  @@index([clinicId, branchId, medicineId])
+  @@map("inventory_items")
+}
+
+/// Reorder level for a medicine at a branch (low stock = usable quantity across batches ≤ this).
+model InventoryReorderLevel {
+  id           String   @id @default(uuid()) @db.Uuid
+  clinicId     String   @db.Uuid
+  branchId     String   @db.Uuid
+  medicineId   String   @db.Uuid
+  reorderLevel Int
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+
+  clinic   Clinic   @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  branch   Branch   @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
+  medicine Medicine @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+
+  @@unique([clinicId, branchId, medicineId])
+  @@map("inventory_reorder_levels")
+}
+
+/// Append-only stock ledger. clinicId, branchId, quantityAfter, actorUserId and
+/// occurredAt are set by the database trigger, not by the caller.
+model StockMovement {
+  id                 String            @id @default(uuid()) @db.Uuid
+  clinicId           String            @db.Uuid
+  branchId           String            @db.Uuid
+  inventoryItemId    String            @db.Uuid
+  type               StockMovementType
+  quantityDelta      Int
+  quantityAfter      Int               @default(0)
+  actorUserId        String            @db.Uuid
+  occurredAt         DateTime          @default(now()) @db.Timestamptz(6)
+  reason             String?
+  reference          String?
+  reversesMovementId String?           @unique @db.Uuid
+
+  item       InventoryItem  @relation(fields: [clinicId, inventoryItemId], references: [clinicId, id], onDelete: Restrict)
+  actor      User           @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  reverses   StockMovement? @relation("StockReversal", fields: [reversesMovementId], references: [id], onDelete: Restrict)
+  reversedBy StockMovement? @relation("StockReversal")
+
+  @@index([inventoryItemId, occurredAt])
+  @@index([clinicId, branchId, occurredAt])
+  @@map("stock_movements")
+}
+
+// ---------------------------------------------------------------------------
+// Notifications (P5, migration 20261019000000_notifications)
+// ---------------------------------------------------------------------------
+
+enum NotificationScope {
+  PERSONAL
+  BRANCH
+  CLINIC
+}
+
+enum NotificationType {
+  APPOINTMENT_BOOKED
+  APPOINTMENT_RESCHEDULED
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_CHECKED_IN
+  STOCK_LOW
+  STOCK_OUT
+  STAFF_INVITATION_ACCEPTED
+}
+
+/// In-app notification. No free text: the server renders title/body from fixed
+/// templates using `type` and the allow-listed `data` keys, so no patient name or
+/// clinical detail is ever stored. Created only by database triggers/functions
+/// (app.add_notification); the runtime role can only read rows RLS lets it see.
+/// Retention: 90 days (prisma/purge-notifications.ts, operator-run).
+model Notification {
+  id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinicId            String            @db.Uuid
+  scope               NotificationScope
+  recipientUserId     String?           @db.Uuid
+  branchId            String?           @db.Uuid
+  requiredPermissions String[]
+  type                NotificationType
+  refId               String?           @db.Uuid
+  data                Json              @default("{}")
+  actorUserId         String?           @db.Uuid
+  createdAt           DateTime          @default(now()) @db.Timestamptz(6)
+
+  reads NotificationRead[]
+
+  @@index([recipientUserId, createdAt])
+  @@index([clinicId, branchId, createdAt])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+/// Per-user read receipt. The runtime role may insert only its own (userId, notificationId); readAt is server-set.
+model NotificationRead {
+  userId         String   @db.Uuid
+  notificationId String   @db.Uuid
+  readAt         DateTime @default(now()) @db.Timestamptz(6)
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@id([userId, notificationId])
+  @@index([notificationId])
+  @@map("notification_reads")
+}
+
+// ---------------------------------------------------------------------------
+// Staff invitations (P5, migration 20261019000100_staff_invitations)
+// ---------------------------------------------------------------------------
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+}
+
+enum InvitationDelivery {
+  NOT_SENT
+  SENDING
+  SENT
+  FAILED
+}
+
+/// An Administrator's invitation for one person to join one clinic branch in one
+/// role. Written only by app.create/resend/revoke/record/accept_* functions (the
+/// runtime role has SELECT only). "Expired" = PENDING with expiresAt in the past.
+/// One PENDING invitation per (clinic, email) — partial unique SQL index.
+model StaffInvitation {
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinicId        String             @db.Uuid
+  branchId        String             @db.Uuid
+  roleId          String             @db.Uuid
+  userId          String             @db.Uuid
+  email           String
+  name            String
+  /// E.164; copied onto the account on acceptance if it has no phone (migration 20261020000000).
+  phone           String?
+  status          InvitationStatus   @default(PENDING)
+  expiresAt       DateTime           @db.Timestamptz(6)
+  deliveryStatus  InvitationDelivery @default(NOT_SENT)
+  deliveryError   String?
+  sendAttempts    Int                @default(0)
+  lastAttemptAt   DateTime?          @db.Timestamptz(6)
+  lastSentAt      DateTime?          @db.Timestamptz(6)
+  invitedByUserId String             @db.Uuid
+  acceptedAt      DateTime?          @db.Timestamptz(6)
+  membershipId    String?            @unique @db.Uuid
+  revokedAt       DateTime?          @db.Timestamptz(6)
+  revokedByUserId String?            @db.Uuid
+  createdAt       DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime           @default(now()) @db.Timestamptz(6)
+
+  branch        Branch                        @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
+  role          Role                          @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  invitedBy     User                          @relation("InvitationInviter", fields: [invitedByUserId], references: [id], onDelete: Restrict)
+  doctorDetails StaffInvitationDoctorDetails?
+
+  @@index([clinicId, status, createdAt])
+  @@index([userId, status])
+  @@map("staff_invitations")
+}
+
+/// Doctor profile details held on a Doctor invitation until it is accepted.
+model StaffInvitationDoctorDetails {
+  invitationId         String  @id @db.Uuid
+  clinicId             String  @db.Uuid
+  specialtyId          String  @db.Uuid
+  qualifications       String
+  registrationNumber   String
+  experienceYears      Int
+  consultationFeePaise Int
+  onlineConsultation   Boolean @default(false)
+
+  invitation StaffInvitation @relation(fields: [invitationId], references: [id], onDelete: Restrict)
+  specialty  Specialty       @relation(fields: [specialtyId], references: [id], onDelete: Restrict)
+
+  @@map("staff_invitation_doctor_details")
+}
+
+// ---------------------------------------------------------------------------
+// Audit trail
+// ---------------------------------------------------------------------------
+
+enum AuditOutcome {
+  SUCCESS
+  DENIED
+  FAILURE
+}
+
+/// Append-only security/audit log. Written only through the database (row
+/// triggers and the app.log_event() function); UPDATE, DELETE and TRUNCATE are
+/// blocked by triggers. Never stores passwords, tokens, credentials, or
+/// clinical content — data-change events record WHICH columns changed, not values.
+/// No foreign keys on purpose: audit rows must outlive (and never block) the rows they describe.
+model AuditEvent {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  occurredAt  DateTime     @default(now()) @db.Timestamptz(6)
+  /// public.users.id of the actor, when known.
+  actorUserId String?      @db.Uuid
+  /// Supabase auth user id of the actor, when known.
+  actorAuthId String?
+  /// Non-user actors ("cli:auth:provision", "db:postgres") or the attempted email of a failed sign-in.
+  actorLabel  String?
+  clinicId    String?      @db.Uuid
+  /// e.g. "auth.sign_in", "access.denied", "patients.update", "clinic_memberships.insert".
+  action      String
+  targetType  String?
+  targetId    String?
+  outcome     AuditOutcome
+  /// Machine-readable reason code (e.g. "invalid_credentials", "FORBIDDEN").
+  reason      String?
+  ipAddress   String?
+  /// Small, non-sensitive context (changed column names, request path, role ids).
+  metadata    Json?
+
+  @@index([clinicId, occurredAt])
+  @@index([actorUserId, occurredAt])
+  @@index([action, occurredAt])
+  @@map("audit_events")
+}
