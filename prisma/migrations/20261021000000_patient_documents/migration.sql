@@ -153,7 +153,12 @@ $$ SELECT p_category IN ('LAB_REPORT', 'IMAGING', 'DISCHARGE_SUMMARY', 'REFERRAL
 CREATE FUNCTION app.clinical_record_visible(p_patient_id uuid, p_branch_id uuid) RETURNS boolean
   LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS
 $$
-  SELECT app.is_staff_member() AND (
+  SELECT app.is_staff_member()
+  -- Defence in depth: the patient and the branch must both belong to the caller's clinic,
+  -- whatever the calling policy or function already checked.
+  AND EXISTS (SELECT 1 FROM public.patients p WHERE p.id = p_patient_id AND p."clinicId" = app.current_clinic_id())
+  AND EXISTS (SELECT 1 FROM public.branches b WHERE b.id = p_branch_id AND b."clinicId" = app.current_clinic_id())
+  AND (
     -- Administrators: within their own branch scope (clinic-wide when unrestricted).
     (app.staff_can(ARRAY['medical_record.view', 'medical_record.manage', 'lab.manage']) AND app.branch_visible(p_branch_id))
     -- Doctors: patients they have an appointment with, in any branch of this clinic (continuity of care).
@@ -167,7 +172,8 @@ $$;
 
 CREATE FUNCTION app.admin_document_visible(p_branch_id uuid) RETURNS boolean
   LANGUAGE sql STABLE SET search_path = '' AS
-$$ SELECT app.is_staff_member() AND app.staff_can(ARRAY['patient_document.view']) AND app.branch_visible(p_branch_id) $$;
+$$ SELECT app.is_staff_member() AND app.staff_can(ARRAY['patient_document.view']) AND app.branch_visible(p_branch_id)
+     AND EXISTS (SELECT 1 FROM public.branches b WHERE b.id = p_branch_id AND b."clinicId" = app.current_clinic_id()) $$;
 
 REVOKE ALL ON FUNCTION app.document_is_clinical("DocumentCategory"), app.clinical_record_visible(uuid, uuid), app.admin_document_visible(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.document_is_clinical("DocumentCategory"), app.clinical_record_visible(uuid, uuid), app.admin_document_visible(uuid) TO sehat_app;

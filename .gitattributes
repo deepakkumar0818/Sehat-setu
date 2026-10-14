@@ -1,0 +1,4 @@
+# Applied database migrations must stay byte-for-byte identical to what was
+# applied (Prisma records a SHA-256 checksum of each migration.sql). Never
+# convert their line endings on commit or checkout.
+prisma/migrations/** -text
