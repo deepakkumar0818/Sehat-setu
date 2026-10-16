@@ -24,6 +24,8 @@ const STATUS_TONE_MAP: Record<string, StatusTone> = {
   completed: "success",
   cancelled: "neutral",
   no_show: "danger",
+  pending_approval: "warning",
+  rejected: "danger",
   in_progress: "primary",
   // payments / invoices
   paid: "success",

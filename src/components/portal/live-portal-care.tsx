@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -70,6 +70,8 @@ function LoadError({ error, what, onRetry }: { error: unknown; what: string; onR
 }
 
 const STATUS: Record<PortalAppointmentStatus, { label: string; className: string }> = {
+  pending_approval: { label: "Awaiting receptionist approval", className: "bg-warning/10 text-warning" },
+  rejected: { label: "Declined", className: "bg-danger/10 text-danger" },
   scheduled: { label: "Scheduled", className: "bg-primary/10 text-primary" },
   confirmed: { label: "Confirmed", className: "bg-success/10 text-success" },
   checked_in: { label: "Checked in", className: "bg-warning/10 text-warning" },
@@ -79,9 +81,29 @@ const STATUS: Record<PortalAppointmentStatus, { label: string; className: string
   no_show: { label: "Missed", className: "bg-muted text-muted-foreground" },
 };
 
-export function AppointmentStatusBadge({ status }: { status: PortalAppointmentStatus }) {
-  const s = STATUS[status];
+/** A pending request whose time has passed without approval is shown as expired. */
+const isExpiredRequest = (a: Pick<PortalAppointment, "status" | "startsAt">) => a.status === "pending_approval" && Date.parse(a.startsAt) <= Date.now();
+
+export function AppointmentStatusBadge({ status, startsAt }: { status: PortalAppointmentStatus; startsAt?: string }) {
+  const s = startsAt && isExpiredRequest({ status, startsAt }) ? { label: "Request expired", className: "bg-muted text-muted-foreground" } : STATUS[status];
   return <Badge variant="outline" className={cn("border-transparent", s.className)}>{s.label}</Badge>;
+}
+
+/** What a pending or declined request means for the patient (nothing for other states). */
+function RequestNote({ appt }: { appt: PortalAppointment }) {
+  if (appt.status === "rejected") {
+    return (
+      <p className="text-xs text-danger" data-testid="rejection-reason">
+        The clinic declined this request{appt.rejectionReason ? `: ${appt.rejectionReason}` : "."} Please book another time or contact the clinic.
+      </p>
+    );
+  }
+  if (appt.status !== "pending_approval") return null;
+  return isExpiredRequest(appt) ? (
+    <p className="text-xs text-muted-foreground">The clinic didn&apos;t confirm this request before its time. Please book a new appointment.</p>
+  ) : (
+    <p className="text-xs text-warning">Not confirmed yet: reception will review your request. You&apos;ll see the update here.</p>
+  );
 }
 
 const INVOICE_STATUS: Record<PortalInvoice["status"], { label: string; className: string }> = {
@@ -112,7 +134,7 @@ function AppointmentRow({ appt, actions = true }: { appt: PortalAppointment; act
       <div className="min-w-0 space-y-1">
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-sm font-medium text-foreground">{formatDate(appt.date, "EEE, dd MMM yyyy")} · {formatTime12h(appt.time)}</p>
-          <AppointmentStatusBadge status={appt.status} />
+          <AppointmentStatusBadge status={appt.status} startsAt={appt.startsAt} />
           {appt.type === "online" && <Badge variant="outline" className="gap-1"><VideoIcon className="h-3 w-3" /> Online</Badge>}
         </div>
         <p className="truncate text-sm text-muted-foreground">
@@ -121,25 +143,26 @@ function AppointmentRow({ appt, actions = true }: { appt: PortalAppointment; act
         <p className="truncate text-xs text-muted-foreground">
           {appt.type === "online" ? "Online consultation" : (appt.branchName ?? "Clinic")} · Ref. {appt.reference} · {appt.reason}
         </p>
+        <RequestNote appt={appt} />
       </div>
       {actions && (appt.canCancel || appt.canReschedule) && (
         <div className="flex shrink-0 gap-2">
           {appt.canReschedule && <Button size="sm" variant="outline" onClick={() => setRescheduleOpen(true)}>Reschedule</Button>}
-          {appt.canCancel && <Button size="sm" variant="outline" onClick={() => setCancelOpen(true)}>Cancel</Button>}
+          {appt.canCancel && <Button size="sm" variant="outline" onClick={() => setCancelOpen(true)}>{appt.status === "pending_approval" ? "Withdraw" : "Cancel"}</Button>}
         </div>
       )}
       <ConfirmDialog
         open={cancelOpen}
         onOpenChange={setCancelOpen}
-        title="Cancel this appointment?"
+        title={appt.status === "pending_approval" ? "Withdraw this request?" : "Cancel this appointment?"}
         description={`${appt.doctorName ?? "Your doctor"} on ${formatDate(appt.date)} at ${formatTime12h(appt.time)}. The slot will be released for other patients.`}
-        confirmLabel="Cancel appointment"
+        confirmLabel={appt.status === "pending_approval" ? "Withdraw request" : "Cancel appointment"}
         destructive
         isLoading={cancel.isPending}
         onConfirm={() =>
           cancel.mutate(appt.id, {
             onSuccess: () => {
-              toast.success("Appointment cancelled.");
+              toast.success(appt.status === "pending_approval" ? "Request withdrawn." : "Appointment cancelled.");
               setCancelOpen(false);
             },
             onError: (e) => toast.error(errorMessage(e)),
@@ -163,6 +186,7 @@ function RescheduleDialog({ appt, onClose }: { appt: PortalAppointment; onClose:
           <DialogTitle>Reschedule appointment</DialogTitle>
           <DialogDescription>
             Same doctor and branch: {appt.doctorName ?? "your doctor"}, {appt.branchName ?? "clinic"}. Currently {formatDate(appt.date)} at {formatTime12h(appt.time)}.
+            {" "}The new time is a request: reception approves it before it&apos;s confirmed.
           </DialogDescription>
         </DialogHeader>
         <SlotPicker doctorId={appt.doctorId} branchId={appt.branchId} date={date} time={time} onDate={(d) => { setDate(d); setTime(""); }} onTime={setTime} />
@@ -177,7 +201,7 @@ function RescheduleDialog({ appt, onClose }: { appt: PortalAppointment; onClose:
                 { id: appt.id, date, time },
                 {
                   onSuccess: () => {
-                    toast.success("Appointment rescheduled.");
+                    toast.success("New time requested. It's awaiting receptionist approval.");
                     onClose();
                   },
                   onError: (e) => {
@@ -361,13 +385,14 @@ export function LivePortalDashboard() {
                   <div className="min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-medium text-foreground">{formatTime12h(next.time)}</p>
-                      <AppointmentStatusBadge status={next.status} />
+                      <AppointmentStatusBadge status={next.status} startsAt={next.startsAt} />
                     </div>
                     <p className="truncate text-sm text-foreground">{next.doctorName ?? "Doctor"}{next.specialty ? ` · ${next.specialty}` : ""}</p>
                     <p className="flex items-center gap-1 truncate text-sm text-muted-foreground">
                       {next.type === "online" ? <><VideoIcon className="h-3.5 w-3.5" aria-hidden /> Online consultation</> : <><MapPinIcon className="h-3.5 w-3.5" aria-hidden /> {next.branchName ?? "Clinic"}</>}
                     </p>
                     <p className="text-xs text-muted-foreground">Ref. {next.reference}</p>
+                    <RequestNote appt={next} />
                   </div>
                 </div>
                 {laterUpcoming.length > 0 && (
@@ -507,6 +532,7 @@ type Step = "branch" | "doctor" | "time" | "details" | "review" | "done";
 export function LivePortalBooking() {
   const options = usePortalBookingOptions();
   const book = usePortalBook();
+  const submitting = useRef(false);
   const [branchId, setBranchId] = useState("");
   const [doctorId, setDoctorId] = useState("");
   const [specialty, setSpecialty] = useState("all");
@@ -546,6 +572,9 @@ export function LivePortalBooking() {
   const detailsValid = reason.trim().length >= 2 && (!addSymptoms || (symptoms.trim().length >= 2 && Boolean(onset)));
 
   function submit() {
+    // One request per click: a second click before the first answer does nothing.
+    if (submitting.current) return;
+    submitting.current = true;
     setError(null);
     book.mutate(
       {
@@ -561,6 +590,9 @@ export function LivePortalBooking() {
         onSuccess: (a) => {
           setBooked(a);
           setStep("done");
+        },
+        onSettled: () => {
+          submitting.current = false;
         },
         onError: (e) => {
           setError(errorMessage(e));
@@ -581,7 +613,7 @@ export function LivePortalBooking() {
           <CardContent className="space-y-4 text-center">
             <CheckCircle2Icon className="mx-auto h-10 w-10 text-success" aria-hidden />
             <div className="space-y-1">
-              <h2 className="text-lg font-semibold text-foreground">Appointment booked</h2>
+              <h2 className="text-lg font-semibold text-foreground">{booked.status === "pending_approval" ? "Request sent" : "Appointment booked"}</h2>
               <p className="text-sm text-muted-foreground">Reference <span className="font-mono font-medium text-foreground">{booked.reference}</span></p>
             </div>
             <div className="mx-auto max-w-sm space-y-1 text-left text-sm">
@@ -594,8 +626,13 @@ export function LivePortalBooking() {
               )}
               <div className="flex items-center gap-2 pt-1"><span className="text-muted-foreground">Status</span> <AppointmentStatusBadge status={booked.status} /></div>
             </div>
+            {booked.status === "pending_approval" && (
+              <p className="mx-auto max-w-sm rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">
+                Your appointment isn&apos;t confirmed yet. Reception will review the request, and you&apos;ll see their answer in My Appointments.
+              </p>
+            )}
             <p className="text-xs text-muted-foreground">
-              {booked.type === "online" ? "Please be ready a few minutes early with a working internet connection." : "Please arrive 10 minutes early."} You can cancel or reschedule from My Appointments until the visit starts.
+              {booked.type === "online" ? "Please be ready a few minutes early with a working internet connection." : "Please arrive 10 minutes early."} You can withdraw or change the request from My Appointments until the visit starts.
             </p>
             <div className="flex flex-col justify-center gap-2 sm:flex-row">
               <Button asChild><Link href="/portal/appointments">View my appointments</Link></Button>
@@ -843,7 +880,7 @@ function SummaryLine({ icon: Icon, text }: { icon: typeof UserIcon; text: string
 const TABS: { value: PortalAppointmentScope; label: string; empty: string }[] = [
   { value: "upcoming", label: "Upcoming", empty: "You have no upcoming appointments." },
   { value: "past", label: "Past", empty: "No past appointments yet." },
-  { value: "cancelled", label: "Cancelled", empty: "No cancelled appointments." },
+  { value: "cancelled", label: "Cancelled & declined", empty: "No cancelled appointments or declined requests." },
   { value: "all", label: "All", empty: "No appointments yet." },
 ];
 
@@ -857,7 +894,7 @@ export function LivePortalAppointments({ initialTab = "upcoming" }: { initialTab
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold text-foreground">My appointments</h1>
-          <p className="text-sm text-muted-foreground">Upcoming visits can be cancelled or rescheduled here until they start.</p>
+          <p className="text-sm text-muted-foreground">New bookings wait for receptionist approval. You can withdraw, cancel or reschedule until the visit starts.</p>
         </div>
         <Button asChild><Link href="/portal/book"><CalendarPlusIcon /> Book Appointment</Link></Button>
       </div>

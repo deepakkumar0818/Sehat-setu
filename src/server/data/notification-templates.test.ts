@@ -17,6 +17,15 @@ describe("notification templates", () => {
     expect(renderNotification({ type: "APPOINTMENT_CANCELLED", refId: null, branchId: null, data: { startsAt, reason: "reassigned" } }, names)?.title).toBe("Appointment reassigned");
   });
 
+  it("booking requests go to reception; a moved visit tells the doctor it's off their schedule", () => {
+    const r = renderNotification({ type: "BOOKING_REQUESTED", refId: MEDICINE, branchId: BRANCH, data: { startsAt, branchId: BRANCH, patientName: "Ravi Kumar" } }, names);
+    expect(r).toMatchObject({ type: "booking_requested", title: "New booking request", link: "/appointments#booking-requests" });
+    expect(r?.body).toMatch(/10:30.*Wakad.*Approve or decline/);
+    expect(r?.body).not.toContain("Ravi");
+    const moved = renderNotification({ type: "APPOINTMENT_CANCELLED", refId: null, branchId: null, data: { startsAt, reason: "awaiting_approval" } }, names);
+    expect(moved?.body).toMatch(/until reception approves the new time/);
+  });
+
   it("stock alerts link to the protected stock page", () => {
     const r = renderNotification({ type: "STOCK_LOW", refId: MEDICINE, branchId: BRANCH, data: { medicineName: "Paracetamol 500 mg", usable: 3, reorderLevel: 10 } }, names);
     expect(r).toMatchObject({ type: "stock_low", link: `/inventory/${BRANCH}/${MEDICINE}` });
@@ -26,7 +35,7 @@ describe("notification templates", () => {
 
   it("only allow-listed data is used: unknown keys (e.g. a patient name) never reach the text", () => {
     const data = { startsAt, patientName: "Ravi Kumar", diagnosis: "Hypertension", reason: "chest pain", note: "<script>" };
-    for (const type of ["APPOINTMENT_BOOKED", "APPOINTMENT_CANCELLED", "APPOINTMENT_CHECKED_IN", "APPOINTMENT_RESCHEDULED", "STOCK_LOW", "STOCK_OUT", "STAFF_INVITATION_ACCEPTED"]) {
+    for (const type of ["APPOINTMENT_BOOKED", "APPOINTMENT_CANCELLED", "APPOINTMENT_CHECKED_IN", "APPOINTMENT_RESCHEDULED", "STOCK_LOW", "STOCK_OUT", "STAFF_INVITATION_ACCEPTED", "BOOKING_REQUESTED"]) {
       const r = renderNotification({ type, refId: null, branchId: null, data }, names);
       const text = `${r?.title} ${r?.body} ${r?.link}`;
       expect(text, type).not.toMatch(/Ravi|Kumar|Hypertension|chest pain|<script>/);

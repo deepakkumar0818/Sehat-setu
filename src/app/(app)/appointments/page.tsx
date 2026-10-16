@@ -13,7 +13,8 @@ import { AppointmentFormDialog } from "@/components/appointments/appointment-for
 import { MonthGrid } from "@/components/appointments/month-grid";
 import { useAppointments } from "@/hooks/use-appointments";
 import { useDoctorOptions } from "@/hooks/use-people";
-import { useAppNow } from "@/lib/data-source";
+import { useAppNow, useLiveData } from "@/lib/data-source";
+import { PendingBookingRequests } from "@/components/appointments/pending-booking-requests";
 import type { AppointmentStatus, AppointmentType } from "@/types";
 
 type ViewMode = "day" | "week" | "month";
@@ -22,6 +23,7 @@ export default function AppointmentsPage() {
   const searchParams = useSearchParams();
   const doctors = useDoctorOptions();
   const now = useAppNow(); // real time with live data, the demo clock otherwise
+  const live = useLiveData();
 
   const [view, setView] = useState<ViewMode>("day");
   const [anchorDate, setAnchorDate] = useState(now);
@@ -83,6 +85,9 @@ export default function AppointmentsPage() {
         }
       />
 
+      {/* Live: patient portal requests awaiting reception (hidden for roles that can't decide). */}
+      {live && <PendingBookingRequests />}
+
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="icon" onClick={() => navigate(-1)} aria-label="Previous">
@@ -120,6 +125,7 @@ export default function AppointmentsPage() {
               <SelectItem value="completed">Completed</SelectItem>
               <SelectItem value="cancelled">Cancelled</SelectItem>
               <SelectItem value="no_show">No Show</SelectItem>
+              {live && <SelectItem value="rejected">Declined requests</SelectItem>}
             </SelectContent>
           </Select>
           <Select value={type} onValueChange={(v) => setType(v as AppointmentType | "all")}>

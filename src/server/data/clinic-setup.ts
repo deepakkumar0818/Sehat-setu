@@ -94,10 +94,10 @@ export async function updateBranch(ctx: TenantContext, id: string, raw: unknown,
       if (status === "INACTIVE") {
         if (branch.isHeadOffice) throw new DataError("INVALID_TRANSITION", "The head office can't be deactivated.");
         const upcoming = await tx.appointment.count({
-          where: { clinicId: ctx.clinicId, branchId: id, startsAt: { gte: new Date() }, status: { in: ["SCHEDULED", "CONFIRMED", "CHECKED_IN"] } },
+          where: { clinicId: ctx.clinicId, branchId: id, startsAt: { gte: new Date() }, status: { in: ["PENDING_APPROVAL", "SCHEDULED", "CONFIRMED", "CHECKED_IN"] } },
         });
         if (upcoming > 0) {
-          throw new DataError("CONFLICT", `This branch has ${upcoming} upcoming appointment${upcoming === 1 ? "" : "s"}. Reschedule or cancel them first.`);
+          throw new DataError("CONFLICT", `This branch has ${upcoming} upcoming appointment${upcoming === 1 ? "" : "s"} or booking request${upcoming === 1 ? "" : "s"}. Reschedule, cancel or decline them first.`);
         }
       }
       return toBranch(await tx.branch.update({ where: { id }, data: { status } }));

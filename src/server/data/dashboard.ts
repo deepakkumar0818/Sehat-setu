@@ -46,7 +46,9 @@ export interface DashboardData {
 
 const PATIENT_VIEW = ["patient.view", "patient.basic_info.view", "assigned_patients.view"];
 const BILLING_VIEW = ["billing.view", "invoice.view", "billing.manage"];
+// Pending and declined patient requests aren't appointments yet: excluded from every list and count here.
 const STATUS_ORDER = ["SCHEDULED", "CONFIRMED", "CHECKED_IN", "IN_CONSULTATION", "COMPLETED", "CANCELLED", "NO_SHOW"];
+const NOT_REQUESTS = { notIn: ["PENDING_APPROVAL", "REJECTED"] as ("PENDING_APPROVAL" | "REJECTED")[] };
 
 type ApptRow = { id: string; startsAt: Date; type: string; status: string; patientId: string; doctorId: string; branchId: string };
 
@@ -105,10 +107,10 @@ export async function getDashboardData(ctx: TenantContext, now: Date = new Date(
       tx.doctorProfile.count({
         where: { clinicId: ctx.clinicId, status: "ACTIVE", ...(ctx.branchId ? { branches: { some: { branchId: ctx.branchId } } } : {}) },
       }),
-      tx.appointment.findMany({ where: { ...apptScope, startsAt: { gte: today.start, lt: today.end } }, orderBy: { startsAt: "asc" }, select: apptSelect }),
-      tx.appointment.findMany({ where: { ...apptScope, startsAt: { lt: today.start } }, orderBy: { startsAt: "desc" }, take: 8, select: apptSelect }),
+      tx.appointment.findMany({ where: { ...apptScope, startsAt: { gte: today.start, lt: today.end }, status: NOT_REQUESTS }, orderBy: { startsAt: "asc" }, select: apptSelect }),
+      tx.appointment.findMany({ where: { ...apptScope, startsAt: { lt: today.start }, status: NOT_REQUESTS }, orderBy: { startsAt: "desc" }, take: 8, select: apptSelect }),
       tx.appointment.count({ where: { ...apptScope, startsAt: { gte: today.end, lt: windowEnd }, status: { in: ["SCHEDULED", "CONFIRMED"] } } }),
-      tx.appointment.groupBy({ by: ["status"], where: { ...apptScope, startsAt: { gte: windowStart, lt: windowEnd } }, _count: { _all: true } }),
+      tx.appointment.groupBy({ by: ["status"], where: { ...apptScope, startsAt: { gte: windowStart, lt: windowEnd }, status: NOT_REQUESTS }, _count: { _all: true } }),
     ]);
 
     const counts = new Map(statusGroups.map((g) => [g.status as string, g._count._all]));

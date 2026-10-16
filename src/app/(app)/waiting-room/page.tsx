@@ -18,6 +18,7 @@ import type { Doctor, Patient } from "@/types";
 import { useUiStore } from "@/store/ui-store";
 import { useAppNow, useLiveData } from "@/lib/data-source";
 import { cn } from "@/lib/utils";
+import { PendingBookingRequests } from "@/components/appointments/pending-booking-requests";
 
 const NO_PATIENTS: Patient[] = [];
 const NO_DOCTORS: Doctor[] = [];
@@ -38,6 +39,8 @@ export default function WaitingRoomPage() {
   return (
     <div className="space-y-5">
       <PageHeader title="Waiting Room" description="Live view of patients waiting or currently in consultation." />
+      {/* Live: patient portal requests awaiting reception (hidden for roles that can't decide). */}
+      {live && <PendingBookingRequests branchId={activeBranchId ?? undefined} className="mb-4" />}
 
       {isError ? (
         <QueryError error={error} what="Waiting room" onRetry={() => refetch()} />

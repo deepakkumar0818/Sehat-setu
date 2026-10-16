@@ -36,7 +36,10 @@ export function ageFrom(dob: Date, now: Date = new Date()): number {
 
 // --- enums -----------------------------------------------------------------
 
-export type DbAppointmentStatus = "SCHEDULED" | "CONFIRMED" | "CHECKED_IN" | "IN_CONSULTATION" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
+export type DbAppointmentStatus = "SCHEDULED" | "CONFIRMED" | "CHECKED_IN" | "IN_CONSULTATION" | "COMPLETED" | "CANCELLED" | "NO_SHOW" | "PENDING_APPROVAL" | "REJECTED";
+
+/** Patient requests awaiting or refused by reception: never part of a doctor's schedule or appointment counts. */
+export const REVIEW_STATUSES: DbAppointmentStatus[] = ["PENDING_APPROVAL", "REJECTED"];
 export type DbAppointmentType = "IN_PERSON" | "ONLINE" | "FOLLOW_UP" | "WALK_IN";
 
 const STATUS_TO_UI: Record<DbAppointmentStatus, AppointmentStatus> = {
@@ -47,6 +50,8 @@ const STATUS_TO_UI: Record<DbAppointmentStatus, AppointmentStatus> = {
   COMPLETED: "completed",
   CANCELLED: "cancelled",
   NO_SHOW: "no_show",
+  PENDING_APPROVAL: "pending_approval",
+  REJECTED: "rejected",
 };
 
 export const appointmentStatusToUi = (s: DbAppointmentStatus): AppointmentStatus => STATUS_TO_UI[s];

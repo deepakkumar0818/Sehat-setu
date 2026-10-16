@@ -1120,3 +1120,53 @@ applied to any production project.
 * **Tests:** `clinic-admin-rules.test.ts`, `src/test/ui/live-clinic-admin.test.tsx`,
   and `clinic-admin.integration.test.ts`. The integration test uses the clinic's
   own active administrator (`activeAdminContext`), so it runs without the demo seed.
+
+## Reception approval of patient bookings
+
+**Status: migrations `20261030000000_appointment_review_statuses` (enum values
+only) and `20261030000100_patient_booking_approval` applied to the configured
+Supabase project (2026-10-16; checksums match, existing appointments unchanged).**
+Before that they were verified on a throwaway PostgreSQL (PGlite, in memory):
+all 26 migrations apply from scratch and 39 workflow checks pass (pending status,
+slot held, guard trigger, permissions and branch/clinic scope, approve, reject,
+expired, slot taken, reschedule, withdraw, limit, grants). Any other database
+needs `npm run db:migrate` **before this code is deployed against it**: the app
+reads the new columns and statuses, so without the migrations the patient
+portal's appointment pages and the reception queue fail to load.
+
+* **States:** a patient's booking is `PENDING_APPROVAL`. It holds its slot under
+  the same advisory lock and busy checks as every booking, but isn't on any
+  doctor's schedule. Reception moves it to `CONFIRMED` (approve) or `REJECTED`
+  (reject, with a 3–300 character reason shown to the patient). `REJECTED` frees
+  the slot, like `CANCELLED`/`NO_SHOW`. Rows are never deleted. A patient
+  moving a request, or a confirmed visit, makes it `PENDING_APPROVAL` again.
+* **Who decides:** `app.approve_patient_booking(id)` and
+  `app.reject_patient_booking(id, reason)` (SECURITY DEFINER, EXECUTE for
+  `sehat_app` only). Both require a verified staff member with
+  `appointment.update` (Administrator, Clinic Manager, Receptionist; not
+  doctors or nurses), in the pinned clinic, whose branch scope covers the
+  appointment (another branch's or clinic's request is `NOT_FOUND`). They
+  record `approvedAt/approvedByUserId` or `rejectedAt/rejectedByUserId/rejectionReason`
+  from the session, never from the request.
+* **Approval re-checks, under the slot lock:** still pending and unchanged (a
+  conditional update, so of two concurrent approvals one gets `NOT_PENDING`),
+  not started (`EXPIRED`), doctor ACTIVE at the ACTIVE branch and patient ACTIVE
+  (`UNAVAILABLE`), and no other active booking for the doctor (`SLOT_TAKEN`) or
+  the patient (`PATIENT_CONFLICT`) at that time. Lock order (advisory slot lock,
+  then the row) matches the booking and reschedule paths.
+* **Guard trigger** `guard_appointment_review` (BEFORE INSERT/UPDATE on
+  `appointments`): the runtime role has table-wide UPDATE on `appointments`, so
+  for its own statements the trigger refuses creating, moving, approving,
+  rejecting or reviving a `PENDING_APPROVAL`/`REJECTED` row, and any write of the
+  review columns. Only the definer functions (running as their owner) may.
+* **Schedules and counts:** staff appointment lists, today's schedule, the
+  waiting room, dashboards and reports leave out `PENDING_APPROVAL` and
+  `REJECTED`. Declined requests can be listed with the "Declined requests" status
+  filter. Reception sees requests in **Pending Patient Bookings** on the
+  Appointments and Waiting Room pages (`GET /api/v1/booking-requests`,
+  `POST …/[id]/approve`, `POST …/[id]/reject`).
+* **Notifications:** a new or moved request → `BOOKING_REQUESTED` to the
+  branch's staff with `appointment.update`; the doctor gets
+  `APPOINTMENT_BOOKED` only on approval. Patients have no in-app notifications
+  and no email is sent (no provider for it): the portal shows "Awaiting
+  receptionist approval", "Declined" with the reason, or "Request expired".

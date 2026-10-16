@@ -21,7 +21,8 @@ import { runPatientScoped, runScoped } from "./scope";
 // Until the migration is applied, getIntakeState() reports
 // { available: false } and the portal simply doesn't offer onboarding.
 
-const UPCOMING_STATUSES = ["SCHEDULED", "CONFIRMED"] as const;
+// Includes the patient's own pending requests (the questionnaire can be filled in while reception decides).
+const UPCOMING_STATUSES = ["PENDING_APPROVAL", "SCHEDULED", "CONFIRMED"] as const;
 const APPOINTMENT_GRACE_MS = 12 * 60 * 60 * 1000; // matches the function's "startsAt > now() - 12 hours"
 
 /** True when the onboarding tables/functions don't exist yet (migration not applied). */

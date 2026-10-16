@@ -33,7 +33,11 @@ export function readData(data: unknown) {
     startsAt: date(d.startsAt),
     previousStartsAt: date(d.previousStartsAt),
     branchId: typeof d.branchId === "string" && UUID.test(d.branchId) ? d.branchId : null,
-    reason: d.reason === "reassigned" ? ("reassigned" as const) : d.reason === "cancelled" ? ("cancelled" as const) : null,
+    reason:
+      d.reason === "reassigned" ? ("reassigned" as const)
+      : d.reason === "cancelled" ? ("cancelled" as const)
+      : d.reason === "awaiting_approval" ? ("awaiting_approval" as const)
+      : null,
     // A shared-catalogue medicine name (public reference data), trimmed and length-limited.
     medicineName: typeof d.medicineName === "string" ? d.medicineName.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim().slice(0, 120) || null : null,
     usable: int(d.usable),
@@ -62,9 +66,24 @@ export function renderNotification(n: StoredNotification, branchName: (id: strin
         link: "/appointments",
       };
     case "APPOINTMENT_CANCELLED":
+      if (d.reason === "awaiting_approval") {
+        return {
+          type: "appointment_cancelled",
+          title: "Appointment moved by the patient",
+          body: `Your appointment on ${when(d.startsAt)}${at(branchName(d.branchId))} was moved by the patient and is off your schedule until reception approves the new time.`,
+          link: "/appointments",
+        };
+      }
       return d.reason === "reassigned"
         ? { type: "appointment_cancelled", title: "Appointment reassigned", body: `Your appointment on ${when(d.startsAt)}${at(branchName(d.branchId))} was moved to another doctor.`, link: "/appointments" }
         : { type: "appointment_cancelled", title: "Appointment cancelled", body: `Your appointment on ${when(d.startsAt)}${at(branchName(d.branchId))} was cancelled.`, link: "/appointments" };
+    case "BOOKING_REQUESTED":
+      return {
+        type: "booking_requested",
+        title: "New booking request",
+        body: `A patient asked for an appointment on ${when(d.startsAt)}${at(branchName(d.branchId))}. Approve or decline it.`,
+        link: "/appointments#booking-requests",
+      };
     case "APPOINTMENT_CHECKED_IN":
       return { type: "appointment_checked_in", title: "Patient checked in", body: `Your patient for ${when(d.startsAt)}${at(branchName(d.branchId))} has checked in.`, link: "/waiting-room" };
     case "STOCK_LOW":

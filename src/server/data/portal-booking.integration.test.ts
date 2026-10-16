@@ -4,14 +4,16 @@ import { adminClient, contextFor, FIX, inRollback, istDate, patientContextFor, p
 import { demoId } from "../../../prisma/seed/demo-data";
 import type { PatientContext, TenantContext } from "@/server/auth/authorize";
 import type { TenantTx } from "@/server/db/tenant";
-import { createAppointment } from "./appointments";
+import { createAppointment, getAppointment, listAppointments } from "./appointments";
+import { approveBookingRequest, listBookingRequests, rejectBookingRequest } from "./booking-review";
 import { bookMyAppointment, cancelMyAppointment, getMyAppointment, getMySlots, listMyAppointments, rescheduleMyAppointment } from "./portal-booking";
 
 // Patient self-booking (migration 20261028000000) against the live database, as
 // the runtime role with real RLS: the fictional portal user PU-01 (Aarogya
 // patient #1) and staff fixtures, inside ONE transaction that is rolled back.
 // Synthetic reasons only ("ZZTEST"); table counts are compared afterwards.
-// Needs the migration applied to the TEST database: npm run test:integration.
+// Needs the migrations applied to the TEST database (incl. 20261030000100, booking
+// approval) and the demo fixtures: npm run test:integration.
 
 let admin: Client;
 let reception: TenantContext;
@@ -73,14 +75,14 @@ describe("patient self-booking", () => {
       expect(free.length, "fixture: DR-01 has free slots").toBeGreaterThan(2);
       const [t1, t2, t3] = free;
 
-      // Book: own record, SCHEDULED, standard slot; symptoms saved in the same transaction.
+      // Book: own record, a PENDING request (not confirmed), standard slot; symptoms saved in the same transaction.
       const booked = await asPortal(() =>
         bookMyAppointment(portal, { branchId: FIX.kothrud, doctorId: FIX.doctor1, date, time: t1, reason: "ZZTEST checkup",
           symptoms: { requestId: crypto.randomUUID(), symptoms: "ZZTEST cough", onset: "DAYS_1_3", severity: "MILD" } }, tx)
       );
-      expect(booked).toMatchObject({ date, time: t1, status: "scheduled", canCancel: true, canReschedule: true });
+      expect(booked).toMatchObject({ date, time: t1, status: "pending_approval", canCancel: true, canReschedule: true });
       const row = (await tx.$queryRaw<{ patientId: string; status: string }[]>`SELECT "patientId"::text AS "patientId", status::text FROM appointments WHERE id = ${booked.id}::uuid`)[0];
-      expect(row).toEqual({ patientId: PORTAL_PATIENT, status: "SCHEDULED" });
+      expect(row).toEqual({ patientId: PORTAL_PATIENT, status: "PENDING_APPROVAL" });
       expect((await asPortal(() => getMySlots(portal, { doctorId: FIX.doctor1, branchId: FIX.kothrud, date }, tx))).slots).not.toContain(t1);
 
       // Conflicts and duplicates, from the patient and from staff.
@@ -115,7 +117,7 @@ describe("patient self-booking", () => {
 
       // Reschedule and cancel own; closed appointments can't be changed.
       const moved = await asPortal(() => rescheduleMyAppointment(portal, booked.id, { date, time: t3 }, tx));
-      expect(moved).toMatchObject({ time: t3, status: "scheduled" });
+      expect(moved).toMatchObject({ time: t3, status: "pending_approval" });
       const cancelled = await asPortal(() => cancelMyAppointment(portal, booked.id, tx));
       expect(cancelled).toMatchObject({ status: "cancelled", canCancel: false, canReschedule: false });
       expect(await asPortal(() => codeIn(tx, () => cancelMyAppointment(portal, booked.id, tx)))).toBe("INVALID_TRANSITION");
@@ -124,6 +126,56 @@ describe("patient self-booking", () => {
       expect((await asPortal(() => getMySlots(portal, { doctorId: FIX.doctor1, branchId: FIX.kothrud, date }, tx))).slots).toContain(t3);
       const own = await asPortal(() => listMyAppointments(portal, { scope: "cancelled" }, tx));
       expect(own.items.map((a) => a.id)).toContain(booked.id);
+    });
+  });
+
+  it("reception approves or rejects requests; only approved ones reach the doctor's schedule", async () => {
+    await inRollback(async ({ tx, as }) => {
+      const asPortal = async <T,>(fn: () => Promise<T>) => {
+        await pinPatient(tx, portal);
+        return fn();
+      };
+      const doctor = await contextFor(admin, "DR-01");
+      const date = weekday(5);
+      const [t1, t2] = (await asPortal(() => getMySlots(portal, { doctorId: FIX.doctor1, branchId: FIX.kothrud, date }, tx))).slots;
+      const req1 = await asPortal(() => bookMyAppointment(portal, { branchId: FIX.kothrud, doctorId: FIX.doctor1, date, time: t1, reason: "ZZTEST approve me" }, tx));
+
+      // Pending: in reception's queue; not on the doctor's schedule or the general lists.
+      await as(reception);
+      const queue = await listBookingRequests(reception, {}, tx);
+      expect(queue.items.find((r) => r.id === req1.id)).toMatchObject({ patientId: PORTAL_PATIENT, doctorId: FIX.doctor1, time: t1, reason: "ZZTEST approve me", expired: false });
+      expect((await listAppointments(reception, { date, pageSize: 100 }, tx)).items.map((a) => a.id)).not.toContain(req1.id);
+      await as(doctor);
+      expect((await listAppointments(doctor, { date, pageSize: 100 }, tx)).items.map((a) => a.id)).not.toContain(req1.id);
+      expect(await codeIn(tx, () => approveBookingRequest(doctor, req1.id, tx))).toBe("FORBIDDEN"); // doctors don't decide
+
+      // Approve: confirmed, recorded, on the doctor's schedule; a second approval is refused.
+      await as(reception);
+      await approveBookingRequest(reception, req1.id, tx);
+      const confirmed = await getAppointment(reception, req1.id, tx);
+      expect(confirmed.status).toBe("upcoming");
+      const recorded = (await tx.$queryRaw<{ status: string; by: string }[]>`SELECT status::text, "approvedByUserId"::text AS by FROM appointments WHERE id = ${req1.id}::uuid`)[0];
+      expect(recorded).toEqual({ status: "CONFIRMED", by: reception.userId });
+      await as(doctor);
+      expect((await listAppointments(doctor, { date, pageSize: 100 }, tx)).items.map((a) => a.id)).toContain(req1.id);
+      await as(reception);
+      expect(await codeIn(tx, () => approveBookingRequest(reception, req1.id, tx))).toBe("INVALID_TRANSITION");
+
+      // Reject: needs a reason; the patient sees it; the slot is free again.
+      const req2 = await asPortal(() => bookMyAppointment(portal, { branchId: FIX.kothrud, doctorId: FIX.doctor2, date, time: t2, reason: "ZZTEST reject me" }, tx));
+      await as(reception);
+      expect(await codeIn(tx, () => rejectBookingRequest(reception, req2.id, { reason: "x" }, tx))).toBe("ZodError");
+      await rejectBookingRequest(reception, req2.id, { reason: "ZZTEST doctor on leave" }, tx);
+      const seen = await asPortal(() => getMyAppointment(portal, req2.id, tx));
+      expect(seen).toMatchObject({ status: "rejected", rejectionReason: "ZZTEST doctor on leave", canCancel: false });
+      expect((await asPortal(() => getMySlots(portal, { doctorId: FIX.doctor2, branchId: FIX.kothrud, date }, tx))).slots).toContain(t2);
+      await as(reception);
+      expect((await listAppointments(reception, { date, status: "rejected", pageSize: 100 }, tx)).items.map((a) => a.id)).toContain(req2.id);
+
+      // The runtime role can't approve behind the function's back (guard trigger).
+      const req3 = await asPortal(() => bookMyAppointment(portal, { branchId: FIX.kothrud, doctorId: FIX.doctor2, date: weekday(6), time: "10:00", reason: "ZZTEST guard" }, tx));
+      await as(reception);
+      expect(await codeIn(tx, () => tx.$executeRaw`UPDATE appointments SET status = 'CONFIRMED' WHERE id = ${req3.id}::uuid`)).not.toBe("OK");
     });
   });
 });

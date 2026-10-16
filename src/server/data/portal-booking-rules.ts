@@ -74,14 +74,15 @@ export function bookableSlots(date: string, busy: ReadonlySet<string>, now: Date
   });
 }
 
-/** Mirrors app.patient_cancel/reschedule_appointment: only appointments that haven't started and aren't closed. */
+/** Mirrors app.patient_cancel/reschedule_appointment: pending requests and confirmed visits that haven't started. */
 export function patientCanChange(status: DbAppointmentStatus, startsAt: Date, now: Date): boolean {
-  return (status === "SCHEDULED" || status === "CONFIRMED") && startsAt.getTime() > now.getTime();
+  return (status === "PENDING_APPROVAL" || status === "SCHEDULED" || status === "CONFIRMED") && startsAt.getTime() > now.getTime();
 }
 
 export const portalStatus = (s: DbAppointmentStatus) => s.toLowerCase() as PortalAppointmentStatus;
 
-const ACTIVE: DbAppointmentStatus[] = ["SCHEDULED", "CONFIRMED", "CHECKED_IN", "IN_CONSULTATION"];
+// A pending request is listed with the patient's upcoming visits (labelled as awaiting approval); one whose time passed moves to "past".
+const ACTIVE: DbAppointmentStatus[] = ["PENDING_APPROVAL", "SCHEDULED", "CONFIRMED", "CHECKED_IN", "IN_CONSULTATION"];
 
 /** Which rows a list scope covers (the patient filter is added separately). */
 export function scopeFilter(scope: PortalAppointmentScope, now: Date) {
@@ -92,7 +93,8 @@ export function scopeFilter(scope: PortalAppointmentScope, now: Date) {
     case "past":
       return { OR: [{ status: { in: ["COMPLETED", "NO_SHOW"] as DbAppointmentStatus[] } }, { status: { in: ACTIVE }, startsAt: { lt: new Date(now.getTime() - 12 * 3600_000) } }] };
     case "cancelled":
-      return { status: "CANCELLED" as const };
+      // Cancelled visits and declined requests.
+      return { status: { in: ["CANCELLED", "REJECTED"] as DbAppointmentStatus[] } };
     default:
       return {};
   }

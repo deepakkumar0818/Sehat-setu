@@ -62,6 +62,7 @@ import type {
   LiveExpense,
   LiveExpenseCategory,
   LiveSpecialty,
+  BookingRequestPage,
 } from "@/lib/live-types";
 
 import type { ArchiveReason, DocumentCategoryKey, LabValue } from "@/lib/documents";
@@ -408,6 +409,12 @@ export const liveApi = {
     cancel: (id: string) => apiPost<AppointmentWithNames>(`/api/v1/appointments/${encodeURIComponent(id)}/cancel`),
     noShow: (id: string) => apiPost<AppointmentWithNames>(`/api/v1/appointments/${encodeURIComponent(id)}/no-show`),
     reschedule: (id: string, date: string, time: string) => apiPatch<AppointmentWithNames>(`/api/v1/appointments/${encodeURIComponent(id)}`, { date, time }),
+  },
+  bookingRequests: {
+    list: (branchId?: string) => apiGet<BookingRequestPage>("/api/v1/booking-requests", { branchId }),
+    approve: (id: string) => apiPost<{ id: string; status: "confirmed"; decidedAt: string }>(`/api/v1/booking-requests/${encodeURIComponent(id)}/approve`),
+    reject: (id: string, reason: string) =>
+      apiPost<{ id: string; status: "rejected"; decidedAt: string }>(`/api/v1/booking-requests/${encodeURIComponent(id)}/reject`, { reason }),
   },
   doctors: {
     list: (params: ListDoctorsParams & { status?: "active" | "inactive" | "all" }) =>

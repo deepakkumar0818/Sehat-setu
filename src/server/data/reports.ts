@@ -116,6 +116,8 @@ const invoiceBranch = (s: ResolvedScope) => (s.branchId ? Prisma.sql`AND i."bran
 const emptyCounts = (): AppointmentCounts => ({ total: 0, completed: 0, upcoming: 0, inProgress: 0, cancelled: 0, noShow: 0 });
 
 function addStatus(c: AppointmentCounts, status: string, n: number) {
+  // Pending and declined patient requests never became appointments.
+  if (status === "PENDING_APPROVAL" || status === "REJECTED") return;
   c.total += n;
   if (status === "COMPLETED") c.completed += n;
   else if (status === "SCHEDULED" || status === "CONFIRMED") c.upcoming += n;

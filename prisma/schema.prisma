@@ -83,6 +83,10 @@ enum AppointmentStatus {
   COMPLETED
   CANCELLED
   NO_SHOW
+  /// A patient's self-booked request awaiting reception (holds its slot; not on the doctor's schedule).
+  PENDING_APPROVAL
+  /// A declined request (frees the slot; kept with its reason and audit history).
+  REJECTED
 }
 
 enum ConsultationStatus {
@@ -286,6 +290,8 @@ model User {
   intakeProfilesReported PatientIntakeProfile[] @relation("IntakeReporter")
   symptomReportsReported PatientSymptomReport[] @relation("SymptomReporter")
   expensesRecorded   Expense[]          @relation("ExpenseRecorder")
+  appointmentsApproved Appointment[]    @relation("AppointmentApprover")
+  appointmentsRejected Appointment[]    @relation("AppointmentRejecter")
   expensesVoided     Expense[]          @relation("ExpenseVoider")
 
   @@map("users")
@@ -473,9 +479,18 @@ model Appointment {
   notes           String?
   checkedInAt     DateTime?         @db.Timestamptz(6)
   cancelledAt     DateTime?         @db.Timestamptz(6)
+  /// Reception's decision on a patient's request. Written only by
+  /// app.approve_patient_booking / app.reject_patient_booking (guard trigger).
+  approvedAt       DateTime?        @db.Timestamptz(6)
+  approvedByUserId String?          @db.Uuid
+  rejectedAt       DateTime?        @db.Timestamptz(6)
+  rejectedByUserId String?          @db.Uuid
+  rejectionReason  String?
   createdAt       DateTime          @default(now()) @db.Timestamptz(6)
   updatedAt       DateTime          @updatedAt @db.Timestamptz(6)
 
+  approvedBy   User?         @relation("AppointmentApprover", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  rejectedBy   User?         @relation("AppointmentRejecter", fields: [rejectedByUserId], references: [id], onDelete: SetNull)
   clinic       Clinic        @relation(fields: [clinicId], references: [id], onDelete: Restrict)
   branch       Branch        @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
   patient      Patient       @relation(fields: [clinicId, patientId], references: [clinicId, id], onDelete: Restrict)
@@ -760,6 +775,7 @@ enum NotificationType {
   STOCK_LOW
   STOCK_OUT
   STAFF_INVITATION_ACCEPTED
+  BOOKING_REQUESTED
 }
 
 /// In-app notification. No free text: the server renders title/body from fixed

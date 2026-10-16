@@ -290,7 +290,11 @@ export type AppointmentStatus =
   | "in_consultation"
   | "completed"
   | "cancelled"
-  | "no_show";
+  | "no_show"
+  /** A patient's own booking awaiting reception's approval (live mode). */
+  | "pending_approval"
+  /** A patient's request reception declined (live mode). */
+  | "rejected";
 
 export type PaymentStatus = "paid" | "pending" | "partial";
 

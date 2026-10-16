@@ -29,7 +29,8 @@ export type NotificationTypeKey =
   | "appointment_checked_in"
   | "stock_low"
   | "stock_out"
-  | "staff_invitation_accepted";
+  | "staff_invitation_accepted"
+  | "booking_requested";
 
 /** One notification as shown to its reader. Text is rendered by the server from fixed templates. */
 export interface LiveNotification {
@@ -350,7 +351,8 @@ export interface PortalSummary {
 // --- Patient portal: own appointments, booking, invoices and dashboard ------------
 
 /** How the portal groups an appointment's status. */
-export type PortalAppointmentStatus = "scheduled" | "confirmed" | "checked_in" | "in_consultation" | "completed" | "cancelled" | "no_show";
+/** "pending_approval": the patient's own request awaiting reception; "rejected": reception declined it. */
+export type PortalAppointmentStatus = "pending_approval" | "scheduled" | "confirmed" | "checked_in" | "in_consultation" | "completed" | "cancelled" | "no_show" | "rejected";
 
 /** One of the patient's OWN appointments: no staff notes, no other patients. */
 export interface PortalAppointment {
@@ -372,6 +374,8 @@ export interface PortalAppointment {
   /** Server-decided: the patient may cancel / reschedule this one now. */
   canCancel: boolean;
   canReschedule: boolean;
+  /** Only for a declined request: reception's reason, as written for the patient. */
+  rejectionReason?: string | null;
 }
 
 export type PortalAppointmentScope = "upcoming" | "past" | "cancelled" | "all";
@@ -587,4 +591,36 @@ export interface ExpenseInput {
   date: string;
   paidTo?: string;
   reference?: string;
+}
+
+// --- Reception approval of patient bookings ------------------------------------
+
+/** A patient's self-booked request awaiting reception (staff view). */
+export interface BookingRequest {
+  id: string;
+  patientId: string;
+  patientName: string;
+  patientNumber: string | null;
+  doctorId: string;
+  doctorName: string;
+  specialty: string | null;
+  branchId: string;
+  branchName: string;
+  date: string;
+  time: string;
+  startsAt: string;
+  type: "in_person" | "online";
+  reason: string;
+  /** When the patient last submitted or moved the request. */
+  requestedAt: string;
+  /** The patient filled in the pre-visit questionnaire for it. */
+  hasSymptomReport: boolean;
+  /** The requested time has passed: it can only be declined. */
+  expired: boolean;
+}
+
+export interface BookingRequestPage {
+  items: BookingRequest[];
+  total: number;
+  canReview: boolean;
 }

@@ -57,7 +57,7 @@ describe("getIntakeState", () => {
     const { tx, where } = fakeTx({ profile, appointments: [{ id: "appt-1", startsAt: new Date("2026-10-15T04:30:00Z"), branchId: "branch-1", doctorId: "doctor-1" }] });
     const s = await getIntakeState(CTX, tx, NOW);
     expect(where.profile).toEqual({ clinicId: "clinic-1", patientId: { in: ["patient-1"] } });
-    expect(where.appointments).toMatchObject({ clinicId: "clinic-1", patientId: { in: ["patient-1"] }, status: { in: ["SCHEDULED", "CONFIRMED"] } });
+    expect(where.appointments).toMatchObject({ clinicId: "clinic-1", patientId: { in: ["patient-1"] }, status: { in: ["PENDING_APPROVAL", "SCHEDULED", "CONFIRMED"] } });
     expect(where.reports).toMatchObject({ clinicId: "clinic-1", patientId: { in: ["patient-1"] } });
     expect(s).toMatchObject({
       available: true,

@@ -14,6 +14,7 @@ import {
   defaultSlotsFor,
   invoiceStatusToPayment,
   istToInstant,
+  REVIEW_STATUSES,
   type DbAppointmentStatus,
   type DbAppointmentType,
 } from "./mappers";
@@ -107,7 +108,7 @@ export const listAppointmentsSchema = z.object({
   dateTo: isoDate.optional(),
   doctorId: z.string().optional(),
   branchId: z.string().optional(),
-  status: z.enum(["upcoming", "waiting", "in_consultation", "completed", "cancelled", "no_show", "all"]).optional(),
+  status: z.enum(["upcoming", "waiting", "in_consultation", "completed", "cancelled", "no_show", "pending_approval", "rejected", "all"]).optional(),
   type: z.enum(["in_person", "online", "follow_up", "walk_in", "all"]).optional(),
   patientId: z.string().optional(),
   page: z.coerce.number().int().positive().optional(),
@@ -125,7 +126,8 @@ export async function listAppointments(ctx: TenantContext, input: z.infer<typeof
     ...scopeWhere(ctx, input.branchId),
     ...(Object.keys(startsAt).length ? { startsAt } : {}),
     ...(input.doctorId && input.doctorId !== "all" && ctx.careScope === "clinic" ? { doctorId: input.doctorId } : {}),
-    ...(input.status && input.status !== "all" ? { status: { in: appointmentStatusFromUi(input.status) } } : {}),
+    // Patient requests (pending / declined) appear only when asked for by status: they aren't appointments yet.
+    status: input.status && input.status !== "all" ? { in: appointmentStatusFromUi(input.status) } : { notIn: REVIEW_STATUSES },
     ...(input.type && input.type !== "all" ? { type: appointmentTypeFromUi(input.type) } : {}),
     ...(input.patientId ? { patientId: input.patientId } : {}),
     ...(search
@@ -162,7 +164,7 @@ export async function getTodaysAppointments(ctx: TenantContext, branchId: string
   const today = istDayRange(now, 0);
   return runScoped(ctx, db, async (tx) => {
     const rows = await tx.appointment.findMany({
-      where: { ...scopeWhere(ctx, branchId), startsAt: { gte: today.start, lt: today.end } },
+      where: { ...scopeWhere(ctx, branchId), startsAt: { gte: today.start, lt: today.end }, status: { notIn: REVIEW_STATUSES } },
       orderBy: { startsAt: "asc" },
       select: apptSelect,
     });

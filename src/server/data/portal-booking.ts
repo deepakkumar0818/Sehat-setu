@@ -46,9 +46,12 @@ import { pageArgs, runPatientScoped, type Page } from "./scope";
 // Queries run one after another (one connection per transaction).
 
 const apptSelect = {
-  id: true, branchId: true, doctorId: true, startsAt: true, durationMinutes: true, type: true, status: true, reason: true,
+  id: true, branchId: true, doctorId: true, startsAt: true, durationMinutes: true, type: true, status: true, reason: true, rejectionReason: true,
 } as const;
-type ApptRow = { id: string; branchId: string; doctorId: string; startsAt: Date; durationMinutes: number; type: DbAppointmentType; status: DbAppointmentStatus; reason: string };
+type ApptRow = {
+  id: string; branchId: string; doctorId: string; startsAt: Date; durationMinutes: number; type: DbAppointmentType; status: DbAppointmentStatus; reason: string;
+  rejectionReason: string | null;
+};
 
 const own = (ctx: PatientContext) => ({ clinicId: ctx.clinicId, patientId: { in: ctx.patientIds } });
 
@@ -80,6 +83,8 @@ async function describe(tx: TenantTx, rows: ApptRow[], now: Date): Promise<Porta
       branchName: names.branch.get(r.branchId)?.name ?? null,
       canCancel: changeable,
       canReschedule: changeable,
+      // Reception's reason is written for the patient; shown only on a declined request.
+      rejectionReason: r.status === "REJECTED" ? r.rejectionReason : null,
     };
   });
 }

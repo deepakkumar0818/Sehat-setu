@@ -49,7 +49,7 @@ describe("patientCanChange (cancel / reschedule)", () => {
   it("only appointments that haven't started and aren't closed", () => {
     expect(patientCanChange("SCHEDULED", later, NOW)).toBe(true);
     expect(patientCanChange("CONFIRMED", later, NOW)).toBe(true);
-    for (const s of ["CHECKED_IN", "IN_CONSULTATION", "COMPLETED", "CANCELLED", "NO_SHOW"] as const) expect(patientCanChange(s, later, NOW), s).toBe(false);
+    for (const s of ["CHECKED_IN", "IN_CONSULTATION", "COMPLETED", "CANCELLED", "NO_SHOW", "REJECTED"] as const) expect(patientCanChange(s, later, NOW), s).toBe(false);
     expect(patientCanChange("SCHEDULED", new Date(NOW.getTime() - 60_000), NOW)).toBe(false);
   });
 });
@@ -103,8 +103,8 @@ describe("mapBookingDbError", () => {
 
 describe("list scopes and references", () => {
   it("upcoming keeps today's unfinished visit; cancelled is its own tab", () => {
-    expect(scopeFilter("upcoming", NOW)).toMatchObject({ status: { in: ["SCHEDULED", "CONFIRMED", "CHECKED_IN", "IN_CONSULTATION"] } });
-    expect(scopeFilter("cancelled", NOW)).toEqual({ status: "CANCELLED" });
+    expect(scopeFilter("upcoming", NOW)).toMatchObject({ status: { in: ["PENDING_APPROVAL", "SCHEDULED", "CONFIRMED", "CHECKED_IN", "IN_CONSULTATION"] } });
+    expect(scopeFilter("cancelled", NOW)).toEqual({ status: { in: ["CANCELLED", "REJECTED"] } }); // declined requests too
     expect(scopeFilter("all", NOW)).toEqual({});
     expect(appointmentReference("a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d")).toBe("A1B2C3D4");
   });

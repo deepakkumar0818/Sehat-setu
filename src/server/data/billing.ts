@@ -326,6 +326,7 @@ export async function createInvoiceForAppointment(ctx: TenantContext, appointmen
       return invoiceDetail(ctx, tx, existing as InvoiceRow);
     }
     if (appt.status === "CANCELLED") throw new DataError("INVALID_TRANSITION", "A cancelled appointment can't be invoiced.");
+    if (appt.status === "PENDING_APPROVAL" || appt.status === "REJECTED") throw new DataError("INVALID_TRANSITION", "A booking request can't be invoiced until it's approved.");
 
     const fee = appt.doctor.consultationFeePaise;
     const totals = rule(() => computeInvoiceTotals([{ quantity: 1, unitPricePaise: fee }], 0, 0));
