@@ -376,6 +376,14 @@ export interface PortalAppointment {
   canReschedule: boolean;
   /** Only for a declined request: reception's reason, as written for the patient. */
   rejectionReason?: string | null;
+  /** Doctor's consultation fee (rupees). */
+  fee?: number;
+  /** The booking fee was paid online (and not refunded). */
+  feePaid?: boolean;
+  /** The fee was paid online and refunded (declined or withdrawn). */
+  feeRefunded?: boolean;
+  /** Online payments are set up and this booking's fee can be paid now. */
+  canPayFee?: boolean;
 }
 
 export type PortalAppointmentScope = "upcoming" | "past" | "cancelled" | "all";
@@ -419,6 +427,8 @@ export interface PortalInvoice {
   status: "pending" | "partially_paid" | "paid";
   branchName: string | null;
   appointmentDate: string | null;
+  /** Online payments are set up and there's a balance to pay. */
+  canPayOnline?: boolean;
 }
 
 export interface PortalDashboard {
@@ -617,10 +627,85 @@ export interface BookingRequest {
   hasSymptomReport: boolean;
   /** The requested time has passed: it can only be declined. */
   expired: boolean;
+  /** Advance fee paid online (rupees), or null. Refunded automatically if declined. */
+  feePaid: number | null;
 }
 
 export interface BookingRequestPage {
   items: BookingRequest[];
   total: number;
   canReview: boolean;
+}
+
+/** The patient's clinic, as shown on its public contact card. */
+export interface PortalClinicContact {
+  name: string;
+  email: string;
+  phone: string;
+  addressLine: string;
+  city: string;
+  state: string;
+  pincode: string;
+}
+
+// --- Public website (signed out) -------------------------------------------------
+
+export interface PublicDirectoryDoctor {
+  id: string;
+  clinicId: string;
+  name: string;
+  specialty: string;
+  department: string | null;
+  qualifications: string;
+  experienceYears: number;
+  /** Rupees. */
+  consultationFee: number;
+  onlineConsultation: boolean;
+  bio: string | null;
+  branchIds: string[];
+}
+
+export interface PublicDirectoryBranch {
+  id: string;
+  clinicId: string;
+  name: string;
+  city: string;
+  address: string;
+  phone: string;
+}
+
+export interface PublicDirectory {
+  clinics: { id: string; name: string; city: string; phone: string }[];
+  branches: PublicDirectoryBranch[];
+  doctors: PublicDirectoryDoctor[];
+}
+
+// --- Online payments (Razorpay) ------------------------------------------------
+
+/** What the browser needs to open Razorpay Checkout (no secrets). */
+export interface CheckoutOptions {
+  keyId: string;
+  orderId: string;
+  amountPaise: number;
+  currency: "INR";
+  name: string;
+  description: string;
+  prefill: { name: string; email: string };
+  testMode: boolean;
+}
+
+export interface OnlinePaymentResult {
+  /** "refunded": the money arrived for a booking that's no longer open and was sent back. */
+  status: "paid" | "refunded";
+}
+
+/** A refund that couldn't be completed automatically (staff retry). */
+export interface RefundAttention {
+  id: string;
+  amount: number;
+  purpose: "booking_fee" | "invoice";
+  reason: string | null;
+  requestedAt: string | null;
+  patientName: string;
+  patientNumber: string;
 }

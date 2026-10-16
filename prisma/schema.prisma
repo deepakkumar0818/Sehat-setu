@@ -184,6 +184,7 @@ model Clinic {
   labReports     LabReport[]
   documents      PatientDocument[]
   expenses       Expense[]
+  onlineOrders   OnlinePaymentOrder[]
 
   @@map("clinics")
 }
@@ -215,6 +216,7 @@ model Branch {
   labReports       LabReport[]
   documents        PatientDocument[]
   expenses         Expense[]
+  onlineOrders     OnlinePaymentOrder[]
 
   @@unique([clinicId, code])
   @@unique([clinicId, id])
@@ -292,6 +294,7 @@ model User {
   expensesRecorded   Expense[]          @relation("ExpenseRecorder")
   appointmentsApproved Appointment[]    @relation("AppointmentApprover")
   appointmentsRejected Appointment[]    @relation("AppointmentRejecter")
+  onlineOrdersCreated  OnlinePaymentOrder[] @relation("OnlineOrderCreator")
   expensesVoided     Expense[]          @relation("ExpenseVoider")
 
   @@map("users")
@@ -449,6 +452,7 @@ model Patient {
   invoices     Invoice[]
   labReports   LabReport[]
   documents    PatientDocument[]
+  onlineOrders OnlinePaymentOrder[]
   linkCodes    PatientLinkCode[]
   /// At most one (patient_intake_profiles."patientId" is unique).
   intakeProfiles PatientIntakeProfile[]
@@ -498,6 +502,7 @@ model Appointment {
   consultation Consultation?
   invoice      Invoice?
   symptomReports PatientSymptomReport[]
+  onlineOrders   OnlinePaymentOrder[]
 
   @@unique([clinicId, id])
   @@index([clinicId, startsAt])
@@ -633,6 +638,7 @@ model Invoice {
   appointment Appointment?      @relation(fields: [clinicId, appointmentId], references: [clinicId, id], onDelete: Restrict)
   lineItems   InvoiceLineItem[]
   payments    Payment[]
+  onlineOrders OnlinePaymentOrder[]
 
   @@unique([clinicId, appointmentId])
   @@unique([clinicId, invoiceNumber])
@@ -671,6 +677,7 @@ model Payment {
 
   clinic  Clinic  @relation(fields: [clinicId], references: [id], onDelete: Restrict)
   invoice Invoice @relation(fields: [clinicId, invoiceId], references: [clinicId, id], onDelete: Restrict)
+  onlineOrders OnlinePaymentOrder[]
 
   @@index([invoiceId])
   @@index([clinicId, paidAt])
@@ -1252,4 +1259,58 @@ model Expense {
   @@index([clinicId, expenseDate])
   @@index([clinicId, branchId, expenseDate])
   @@map("expenses")
+}
+
+// ---------------------------------------------------------------------------
+// Online payments (Razorpay)
+// ---------------------------------------------------------------------------
+
+enum OnlinePaymentPurpose {
+  INVOICE
+  BOOKING_FEE
+}
+
+enum OnlinePaymentStatus {
+  CREATED
+  PAID
+  REFUND_PENDING
+  REFUNDED
+}
+
+/// One Razorpay order for a patient's bill or booking fee. Read-only for the
+/// runtime role; written only by the app.*_online_* database functions.
+model OnlinePaymentOrder {
+  id                String               @id @default(uuid()) @db.Uuid
+  clinicId          String               @db.Uuid
+  branchId          String               @db.Uuid
+  patientId         String               @db.Uuid
+  purpose           OnlinePaymentPurpose
+  invoiceId         String?              @db.Uuid
+  appointmentId     String?              @db.Uuid
+  amountPaise       Int
+  currency          String               @default("INR")
+  provider          String               @default("RAZORPAY")
+  providerOrderId   String               @unique
+  status            OnlinePaymentStatus  @default(CREATED)
+  providerPaymentId String?              @unique
+  paymentId         String?              @db.Uuid
+  providerRefundId  String?
+  refundReason      String?
+  paidAt            DateTime?            @db.Timestamptz(6)
+  refundRequestedAt DateTime?            @db.Timestamptz(6)
+  refundedAt        DateTime?            @db.Timestamptz(6)
+  createdByUserId   String?              @db.Uuid
+  createdAt         DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime             @updatedAt @db.Timestamptz(6)
+
+  clinic      Clinic       @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  branch      Branch       @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
+  patient     Patient      @relation(fields: [clinicId, patientId], references: [clinicId, id], onDelete: Restrict)
+  invoice     Invoice?     @relation(fields: [clinicId, invoiceId], references: [clinicId, id], onDelete: Restrict)
+  appointment Appointment? @relation(fields: [clinicId, appointmentId], references: [clinicId, id], onDelete: Restrict)
+  payment     Payment?     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  createdBy   User?        @relation("OnlineOrderCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([clinicId, patientId, createdAt])
+  @@map("online_payment_orders")
 }

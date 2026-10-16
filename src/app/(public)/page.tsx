@@ -12,6 +12,10 @@ import { TestimonialsSection } from "@/components/public/testimonials-section";
 import { FAQSection } from "@/components/public/faq-section";
 import { StoryBanner } from "@/components/public/story-banner";
 import { SPECIALIZATIONS } from "@/data/pools";
+import { connection } from "next/server";
+import { LiveDoctorPreview } from "@/components/public/live-public-doctors";
+import { isSupabaseAuthEnabled } from "@/lib/auth/config";
+import { tryPublicDirectory } from "@/server/data/public-directory";
 
 export const metadata: Metadata = {
   title: "Sehat Setu — Find Doctors & Book Healthcare Appointments",
@@ -28,7 +32,11 @@ export const metadata: Metadata = {
   },
 };
 
-export default function HomePage() {
+export default async function HomePage() {
+  // Live site: real doctors; sample statistics and testimonials are left out.
+  const live = isSupabaseAuthEnabled();
+  if (live) await connection();
+  const directory = live ? await tryPublicDirectory() : null;
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "MedicalOrganization",
@@ -42,15 +50,15 @@ export default function HomePage() {
       {/* eslint-disable-next-line react/no-danger */}
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
       <HeroSection />
-      <TrustStats />
+      {!live && <TrustStats />}
       <HowItWorks />
-      <DoctorDirectoryPreview />
+      {live ? <LiveDoctorPreview directory={directory} /> : <DoctorDirectoryPreview />}
       <SpecialtyGrid specialties={SPECIALIZATIONS} />
       <OnlineConsultationSection />
       <PatientPortalPreview />
       <AISection />
       <ClinicSection />
-      <TestimonialsSection />
+      {!live && <TestimonialsSection />}
       <FAQSection />
       <StoryBanner />
     </>

@@ -33,7 +33,7 @@ const ctx = (over: Partial<TenantContext> = {}): TenantContext => ({
 const req = (over: Record<string, unknown> = {}) => ({
   id: APPT, branchId: "b1", patientId: "p1", doctorId: "d1", startsAt: new Date("2026-10-21T04:30:00.000Z"), durationMinutes: 30, type: "IN_PERSON",
   reason: "Fever", createdAt: NOW, updatedAt: NOW, patient: { name: "Asha", patientNumber: "AAR-P-0001" }, branch: { name: "Kothrud" },
-  doctor: { user: { name: "Dr. Rao" }, specialty: { name: "General" } }, _count: { symptomReports: 1 }, ...over,
+  doctor: { user: { name: "Dr. Rao" }, specialty: { name: "General" } }, _count: { symptomReports: 1 }, onlineOrders: [], ...over,
 });
 
 function fakeTx(opts: { rows?: unknown[]; fail?: string } = {}) {
@@ -67,6 +67,9 @@ describe("booking request queue", () => {
     expect(page.items.map((i) => i.id)).toEqual([APPT, "x-old"]);
     expect(page.items[0]).toMatchObject({ patientName: "Asha", patientNumber: "AAR-P-0001", doctorName: "Dr. Rao", branchName: "Kothrud", date: "2026-10-21", time: "10:00", reason: "Fever", hasSymptomReport: true, expired: false });
     expect(page.items[1].expired).toBe(true);
+    expect(page.items[0].feePaid).toBeNull();
+    const paid = await listBookingRequests(ctx(), {}, fakeTx({ rows: [req({ onlineOrders: [{ amountPaise: 50000 }] })] }).tx, NOW);
+    expect(paid.items[0].feePaid).toBe(500);
   });
 
   it("a branch-restricted receptionist sees only their branch and can't ask for another", async () => {

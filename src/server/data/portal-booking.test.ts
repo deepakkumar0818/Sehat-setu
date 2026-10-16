@@ -42,6 +42,8 @@ function fakeTx(found: unknown = row()) {
       findFirst: vi.fn(async (arg: unknown) => (calls.push({ op: "findFirst", arg }), found)),
     },
     doctorProfile: { findMany: vi.fn(async () => [{ id: "d1", specialty: { name: "General Medicine" } }]) },
+    onlinePaymentOrder: { findMany: vi.fn(async () => []) },
+    invoice: { findMany: vi.fn(async () => []) },
     $queryRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => (sql.push(strings.join("?")), values.length >= 0 ? [{ id: APPT }] : [])),
     $executeRaw: vi.fn(async (strings: TemplateStringsArray) => (sql.push(strings.join("?")), 1)),
   };

@@ -15,6 +15,11 @@
 //   * connections: same origin (/api/v1) and the Supabase project (the
 //     browser client on /auth/set-password). Nothing else.
 //   * no iframes, workers, eval, camera, microphone or geolocation.
+//   * ONLY when Razorpay online payments are configured (`razorpay: true`): its
+//     Checkout script (checkout.razorpay.com), its payment frame and API
+//     (api.razorpay.com), its telemetry (lumberjack.razorpay.com) and images
+//     (cdn.razorpay.com); the Payment Request API for those origins; and popups
+//     (some banks' verification pages) — nothing else from third parties.
 // Development additionally needs 'unsafe-eval' (React debugging) and the HMR
 // websocket.
 //
@@ -30,20 +35,29 @@ export interface SecurityHeaderOptions {
   isDev: boolean;
   /** The Supabase project origin the browser may call, if configured. */
   supabaseOrigin?: string | null;
+  /** Razorpay online payments are configured (RAZORPAY_KEY_ID set at build). */
+  razorpay?: boolean;
 }
+
+const RAZORPAY = {
+  script: "https://checkout.razorpay.com",
+  frame: "https://api.razorpay.com https://checkout.razorpay.com",
+  connect: "https://api.razorpay.com https://lumberjack.razorpay.com",
+  img: "https://cdn.razorpay.com",
+};
 
 export type HeaderRule = { source: string; headers: { key: string; value: string }[] };
 
-export function contentSecurityPolicy({ isDev, supabaseOrigin }: SecurityHeaderOptions): string {
-  const connect = ["'self'", supabaseOrigin, isDev ? "ws: wss:" : null].filter(Boolean).join(" ");
+export function contentSecurityPolicy({ isDev, supabaseOrigin, razorpay = false }: SecurityHeaderOptions): string {
+  const connect = ["'self'", supabaseOrigin, razorpay ? RAZORPAY.connect : null, isDev ? "ws: wss:" : null].filter(Boolean).join(" ");
   return [
     "default-src 'self'",
-    `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+    `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}${razorpay ? ` ${RAZORPAY.script}` : ""}`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
+    `img-src 'self' data: blob:${razorpay ? ` ${RAZORPAY.img}` : ""}`,
     "font-src 'self' data:",
     `connect-src ${connect}`,
-    "frame-src 'none'",
+    razorpay ? `frame-src ${RAZORPAY.frame}` : "frame-src 'none'",
     "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",
@@ -70,6 +84,11 @@ export const PERMISSIONS_POLICY = [
 
 export const HSTS = "max-age=31536000";
 
+/** With Razorpay: the Payment Request API for this site and Razorpay's frames only. */
+export function permissionsPolicyWithPayments(): string {
+  return PERMISSIONS_POLICY.replace("payment=()", 'payment=(self "https://api.razorpay.com" "https://checkout.razorpay.com")');
+}
+
 export function securityHeaders(options: SecurityHeaderOptions): HeaderRule[] {
   const everywhere = [
     { key: "X-Content-Type-Options", value: "nosniff" },
@@ -84,8 +103,8 @@ export function securityHeaders(options: SecurityHeaderOptions): HeaderRule[] {
         { key: "Content-Security-Policy", value: contentSecurityPolicy(options) },
         { key: "X-Frame-Options", value: "DENY" },
         { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-        { key: "Permissions-Policy", value: PERMISSIONS_POLICY },
-        { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+        { key: "Permissions-Policy", value: options.razorpay ? permissionsPolicyWithPayments() : PERMISSIONS_POLICY },
+        { key: "Cross-Origin-Opener-Policy", value: options.razorpay ? "same-origin-allow-popups" : "same-origin" },
       ],
     },
   ];

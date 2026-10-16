@@ -284,6 +284,7 @@ export const LIVE_PORTAL_SECTIONS: PortalNavSection[] = [
     ],
   },
   { items: [{ label: "Bills & Payments", href: "/portal/payments", icon: Wallet }] },
+  { label: "Account", items: [{ label: "Account Settings", href: "/portal/settings", icon: Settings }] },
 ];
 
 export const LIVE_PORTAL_NAV: NavLeaf[] = LIVE_PORTAL_SECTIONS.flatMap((s) => s.items);

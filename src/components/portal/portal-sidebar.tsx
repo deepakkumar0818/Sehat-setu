@@ -53,7 +53,7 @@ export function PortalSidebar() {
   const sections = portalNavSections(useLiveData());
 
   return (
-    <aside className="hidden w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:flex">
+    <aside className="hidden h-full w-60 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:flex">
       <div className="px-4 py-4">
         <Link href="/portal"><Logo dark size="sm" /></Link>
       </div>

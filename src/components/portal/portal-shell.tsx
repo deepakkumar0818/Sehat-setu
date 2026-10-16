@@ -28,14 +28,16 @@ export function PortalShell({ serverUser, intake = null, children }: { serverUse
 
   const shell = (
     <AuthGate mode="portal" serverUser={serverUser}>
-      <div className="flex min-h-svh">
+      {/* App frame: sidebar and header stay put; only the content area scrolls. */}
+      <div className="flex h-svh overflow-hidden print:block print:h-auto print:overflow-visible">
         <LiveDataProvider live={live}>
-          <div className="print:hidden"><PortalSidebar /></div>
+          <div className="h-full print:hidden"><PortalSidebar /></div>
         </LiveDataProvider>
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="print:hidden"><PortalHeader live={live} /></div>
+        <div className="flex h-full min-w-0 flex-1 flex-col">
+          <div className="shrink-0 print:hidden"><PortalHeader live={live} /></div>
           <LiveDataProvider live={live}>
-            <main className="mx-auto w-full max-w-4xl flex-1 px-4 pb-20 pt-5 sm:px-6 md:pb-8 print:max-w-none print:p-0">
+            <div className="min-h-0 flex-1 overflow-y-auto print:overflow-visible" data-testid="portal-scroll">
+            <main className="mx-auto w-full max-w-6xl px-4 pb-24 pt-5 sm:px-6 md:pb-8 lg:px-8 print:max-w-none print:p-0">
               {available ? (
                 children
               ) : (
@@ -46,6 +48,7 @@ export function PortalShell({ serverUser, intake = null, children }: { serverUse
                 />
               )}
             </main>
+            </div>
             <div className="print:hidden"><PortalBottomNav /></div>
           </LiveDataProvider>
         </div>

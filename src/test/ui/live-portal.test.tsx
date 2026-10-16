@@ -128,10 +128,10 @@ describe("patient portal (live)", () => {
 
 describe("live portal navigation", () => {
   it("offers only the database-backed pages; others are blocked by the shell", () => {
-    expect(portalNav(true).map((i) => i.href)).toEqual(["/portal", "/portal/book", "/portal/appointments", "/portal/profile", "/portal/reports", "/portal/documents", "/portal/payments"]);
-    expect(portalNav(true).map((i) => i.label)).toEqual(["Home", "Book Appointment", "My Appointments", "Health Profile", "Reports", "Documents", "Bills & Payments"]);
+    expect(portalNav(true).map((i) => i.href)).toEqual(["/portal", "/portal/book", "/portal/appointments", "/portal/profile", "/portal/reports", "/portal/documents", "/portal/payments", "/portal/settings"]);
+    expect(portalNav(true).map((i) => i.label)).toEqual(["Home", "Book Appointment", "My Appointments", "Health Profile", "Reports", "Documents", "Bills & Payments", "Account Settings"]);
     expect(portalNav(false).length).toBeGreaterThan(3);
-    for (const p of ["/portal", "/portal/book", "/portal/appointments", "/portal/appointments/abc", "/portal/profile", "/portal/reports", "/portal/reports/abc", "/portal/documents", "/portal/payments"]) {
+    for (const p of ["/portal", "/portal/book", "/portal/appointments", "/portal/appointments/abc", "/portal/profile", "/portal/reports", "/portal/reports/abc", "/portal/documents", "/portal/payments", "/portal/settings"]) {
       expect(isLivePortalPath(p), p).toBe(true);
     }
     for (const p of ["/portal/prescriptions", "/portal/ai-assistant", "/portal/consultations", "/portal/consultation/abc", "/portal/reportsx", "/portal/bookings"]) {

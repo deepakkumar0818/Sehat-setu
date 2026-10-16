@@ -8,6 +8,7 @@ import { istDayKey } from "@/lib/ist";
 import type { BookingRequest, BookingRequestPage } from "@/lib/live-types";
 import { appointmentTypeToUi, type DbAppointmentType } from "./mappers";
 import { runScoped } from "./scope";
+import { refundBookingFees } from "./online-payments";
 
 // Reception's queue of patient self-booked requests (status PENDING_APPROVAL)
 // and the approve / reject decisions. Listing runs under the existing
@@ -56,6 +57,7 @@ type Row = {
   branch: { name: string } | null;
   doctor: { user: { name: string }; specialty: { name: string } | null } | null;
   _count: { symptomReports: number };
+  onlineOrders: { amountPaise: number }[];
 };
 
 const select = {
@@ -64,6 +66,7 @@ const select = {
   branch: { select: { name: true } },
   doctor: { select: { user: { select: { name: true } }, specialty: { select: { name: true } } } },
   _count: { select: { symptomReports: true } },
+  onlineOrders: { where: { purpose: "BOOKING_FEE" as const, status: "PAID" as const }, select: { amountPaise: true } },
 } as const;
 
 const toUi = (r: Row, now: Date): BookingRequest => {
@@ -86,6 +89,7 @@ const toUi = (r: Row, now: Date): BookingRequest => {
     requestedAt: r.updatedAt.toISOString(),
     hasSymptomReport: r._count.symptomReports > 0,
     expired: r.startsAt.getTime() <= now.getTime(),
+    feePaid: r.onlineOrders.length ? r.onlineOrders.reduce((sum, o) => sum + o.amountPaise, 0) / 100 : null,
   };
 };
 
@@ -118,6 +122,8 @@ export interface ReviewResult {
   id: string;
   status: "confirmed" | "rejected";
   decidedAt: string;
+  /** Rejected with an online fee paid: refunded now, or pending (staff can retry). */
+  feeRefund?: "refunded" | "pending" | null;
 }
 
 export async function approveBookingRequest(ctx: TenantContext, id: string, db?: TenantTx): Promise<ReviewResult> {
@@ -138,13 +144,18 @@ export async function rejectBookingRequest(ctx: TenantContext, id: string, raw: 
   requirePermission(ctx, BOOKING_REVIEW);
   if (!uuid.safeParse(id).success) throw new AuthError("NOT_FOUND");
   const { reason } = rejectBookingSchema.parse(raw);
-  return runScoped(ctx, db, async (tx) => {
+  const result = await runScoped(ctx, db, async (tx) => {
     try {
       await tx.$executeRaw`SELECT app.reject_patient_booking(${id}::uuid, ${reason})`;
     } catch (err) {
       mapReviewError(err);
     }
     const row = await loadRequest(tx, ctx, id);
-    return { id, status: "rejected", decidedAt: (row?.rejectedAt ?? new Date()).toISOString() };
+    return { id, status: "rejected" as const, decidedAt: (row?.rejectedAt ?? new Date()).toISOString() };
   });
+  // After the decision is committed: an advance fee paid online is owed back.
+  // (Skipped when composed into a caller's transaction, e.g. tests.)
+  if (db) return result;
+  const fees = await refundBookingFees(id, "Booking request declined", { staff: ctx });
+  return { ...result, feeRefund: fees.pending ? "pending" : fees.refunded ? "refunded" : null };
 }

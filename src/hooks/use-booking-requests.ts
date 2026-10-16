@@ -39,3 +39,17 @@ export function useRejectBookingRequest() {
     meta: { inlineErrors: true },
   });
 }
+
+/** Online refunds that need a retry (empty for roles that can't see billing). */
+export function useRefundsNeedingAttention() {
+  return useQuery({ queryKey: ["online-refunds", "live"], queryFn: liveApi.onlinePayments.refundsNeedingAttention, refetchInterval: 120_000, retry: false });
+}
+
+export function useRetryRefund() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => liveApi.onlinePayments.retryRefund(id),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["online-refunds"] }),
+    meta: { inlineErrors: true },
+  });
+}

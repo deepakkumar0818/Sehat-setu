@@ -19,20 +19,22 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const api = vi.hoisted(() => ({
   bookingRequests: { list: vi.fn(), approve: vi.fn(), reject: vi.fn() },
-  portal: { appointments: vi.fn() },
+  portal: { appointments: vi.fn(), startPayment: vi.fn(), verifyPayment: vi.fn(), invoices: vi.fn() },
 }));
+const checkout = vi.hoisted(() => ({ openCheckout: vi.fn() }));
+vi.mock("@/lib/razorpay-checkout", () => checkout);
 vi.mock("@/lib/live-api", async (orig) => {
   const real = await orig<typeof import("@/lib/live-api")>();
   return { ...real, liveApi: { ...real.liveApi, bookingRequests: api.bookingRequests, portal: { ...real.liveApi.portal, ...api.portal } } };
 });
 
 const { PendingBookingRequests } = await import("@/components/appointments/pending-booking-requests");
-const { LivePortalAppointments } = await import("@/components/portal/live-portal-care");
+const { LivePortalAppointments, LivePortalPayments } = await import("@/components/portal/live-portal-care");
 
 const request = (over: Partial<BookingRequest> = {}): BookingRequest => ({
   id: "r1", patientId: "p1", patientName: "Asha Patil", patientNumber: "AAR-P-0001", doctorId: "d1", doctorName: "Dr. Rao", specialty: "General", branchId: "b1",
   branchName: "Kothrud", date: "2026-10-21", time: "10:00", startsAt: "2026-10-21T04:30:00.000Z", type: "in_person", reason: "Fever", requestedAt: "2026-10-20T04:00:00.000Z",
-  hasSymptomReport: true, expired: false, ...over,
+  hasSymptomReport: true, expired: false, feePaid: null, ...over,
 });
 const appt = (over: Partial<PortalAppointment> = {}): PortalAppointment => ({
   id: "a1", reference: "A1B2C3D4", date: "2099-10-21", time: "10:00", startsAt: "2099-10-21T04:30:00.000Z", durationMinutes: 30, type: "in_person", status: "pending_approval",
@@ -166,5 +168,47 @@ describe("the patient's view of a request", () => {
     await render(<LivePortalAppointments />);
     expect(text()).toContain("Request expired");
     expect(text()).toContain("didn't confirm this request before its time");
+  });
+});
+
+describe("paying online", () => {
+  it("booking fee: the server makes the order, Checkout collects it, the server verifies it", async () => {
+    api.portal.appointments.mockResolvedValue({ items: [appt({ fee: 500, canPayFee: true })], total: 1, page: 1, pageSize: 10 });
+    api.portal.startPayment.mockResolvedValue({ keyId: "rzp_test_X", orderId: "order_ABC123456", amountPaise: 50000, currency: "INR", name: "Aarogya", description: "Consultation fee", prefill: { name: "A", email: "a@x" }, testMode: true });
+    checkout.openCheckout.mockResolvedValue({ razorpay_order_id: "order_ABC123456", razorpay_payment_id: "pay_XYZ987654", razorpay_signature: "f".repeat(64) });
+    api.portal.verifyPayment.mockResolvedValue({ status: "paid" });
+    await render(<LivePortalAppointments />);
+    await click(button(/Pay fee/));
+    expect(api.portal.startPayment).toHaveBeenCalledWith({ purpose: "booking_fee", id: "a1" }); // no amount from the browser
+    expect(api.portal.verifyPayment).toHaveBeenCalledWith({ razorpay_order_id: "order_ABC123456", razorpay_payment_id: "pay_XYZ987654", razorpay_signature: "f".repeat(64) });
+  });
+
+  it("closing the payment window records nothing; paid and refunded fees are labelled", async () => {
+    api.portal.appointments.mockResolvedValue({
+      items: [appt({ id: "p1", fee: 500, canPayFee: true }), appt({ id: "p2", feePaid: true, status: "confirmed" }), appt({ id: "p3", feeRefunded: true, status: "rejected", canCancel: false, canReschedule: false })],
+      total: 3, page: 1, pageSize: 10,
+    });
+    api.portal.startPayment.mockResolvedValue({ keyId: "k", orderId: "order_ABC123456", amountPaise: 50000, currency: "INR", name: "n", description: "d", prefill: { name: "", email: "" }, testMode: true });
+    checkout.openCheckout.mockResolvedValue(null);
+    await render(<LivePortalAppointments />);
+    await click(button(/Pay fee/));
+    expect(api.portal.verifyPayment).not.toHaveBeenCalled();
+    const rows = [...document.querySelectorAll('[data-testid="portal-appointment"]')].map((r) => r.textContent ?? "");
+    expect(rows[1]).toContain("Fee paid");
+    expect(rows[2]).toContain("Fee refunded");
+  });
+
+  it("bills: Pay now only where the server allows it", async () => {
+    api.portal.invoices.mockResolvedValue({
+      items: [
+        { id: "i1", invoiceNumber: "AAR-INV-0001", issuedAt: "2026-10-01T00:00:00.000Z", dueDate: null, total: 1200, paid: 200, balance: 1000, status: "partially_paid", branchName: "Kothrud", appointmentDate: null, canPayOnline: true },
+        { id: "i2", invoiceNumber: "AAR-INV-0002", issuedAt: "2026-10-02T00:00:00.000Z", dueDate: null, total: 500, paid: 500, balance: 0, status: "paid", branchName: "Kothrud", appointmentDate: null, canPayOnline: false },
+      ],
+      total: 2, page: 1, pageSize: 20,
+    });
+    await render(<LivePortalPayments />);
+    const rows = [...document.querySelectorAll('[data-testid="portal-invoice"]')];
+    expect(rows[0].textContent).toContain("Pay now");
+    expect(rows[1].textContent).not.toContain("Pay now");
   });
 });

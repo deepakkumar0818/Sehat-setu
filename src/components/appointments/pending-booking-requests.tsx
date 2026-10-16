@@ -9,9 +9,9 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useApproveBookingRequest, useBookingRequests, useRejectBookingRequest } from "@/hooks/use-booking-requests";
+import { useApproveBookingRequest, useBookingRequests, useRefundsNeedingAttention, useRejectBookingRequest, useRetryRefund } from "@/hooks/use-booking-requests";
 import { ApiRequestError } from "@/lib/api-client";
-import { formatDate } from "@/lib/format";
+import { formatCurrency, formatDate } from "@/lib/format";
 import type { BookingRequest } from "@/lib/live-types";
 import { cn } from "@/lib/utils";
 
@@ -88,6 +88,7 @@ export function PendingBookingRequests({ branchId, className }: { branchId?: str
                 <div className="flex flex-wrap gap-1.5">
                   {r.expired && <Badge variant="outline" className="border-danger/30 text-danger">Time has passed</Badge>}
                   {r.hasSymptomReport && <Badge variant="outline">Symptoms submitted</Badge>}
+                  {r.feePaid !== null && <Badge variant="outline" className="border-success/30 text-success">Fee paid online {formatCurrency(r.feePaid)}</Badge>}
                 </div>
                 {errors[r.id] && <p role="alert" className="text-sm text-danger">{errors[r.id]}</p>}
               </div>
@@ -107,6 +108,8 @@ export function PendingBookingRequests({ branchId, className }: { branchId?: str
         <p className="border-t px-4 py-2 text-xs text-muted-foreground">Showing the first {items.length} of {query.data.total} requests.</p>
       )}
 
+      <RefundsNeedingAttention />
+
       {rejecting && <RejectDialog request={rejecting} onClose={() => setRejecting(null)} />}
     </section>
   );
@@ -125,7 +128,7 @@ function RejectDialog({ request, onClose }: { request: BookingRequest; onClose: 
           <DialogTitle>Reject this booking request?</DialogTitle>
           <DialogDescription>
             {request.patientName} · {request.doctorName} · {formatDate(request.date)} at {time12(request.time)}. The slot is freed and the patient sees your reason in
-            the portal.
+            the portal.{request.feePaid !== null && ` The ${formatCurrency(request.feePaid)} paid online is refunded automatically.`}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -136,7 +139,14 @@ function RejectDialog({ request, onClose }: { request: BookingRequest; onClose: 
             setError(null);
             reject.mutate(
               { id: request.id, reason: reason.trim() },
-              { onSuccess: () => { toast.success(`Request from ${request.patientName} declined.`); onClose(); }, onError: (err) => setError(errorText(err)) }
+              {
+                onSuccess: (res) => {
+                  if (res.feeRefund === "pending") toast.warning(`Declined. The online fee refund didn't go through yet; retry it below.`);
+                  else toast.success(`Request from ${request.patientName} declined${res.feeRefund === "refunded" ? " and the fee refunded" : ""}.`);
+                  onClose();
+                },
+                onError: (err) => setError(errorText(err)),
+              }
             );
           }}
         >
@@ -160,5 +170,40 @@ function RejectDialog({ request, onClose }: { request: BookingRequest; onClose: 
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Online refunds Razorpay didn't complete (e.g. it was unreachable): shown only when there are some. */
+function RefundsNeedingAttention() {
+  const query = useRefundsNeedingAttention();
+  const retry = useRetryRefund();
+  const items = query.data?.items ?? [];
+  if (items.length === 0) return null;
+  return (
+    <div className="border-t bg-warning/5 px-4 py-3" data-testid="refunds-attention">
+      <p className="text-sm font-medium text-warning">Online refunds waiting ({items.length})</p>
+      <ul className="mt-2 space-y-2">
+        {items.map((r) => (
+          <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span className="text-foreground">
+              {r.patientName} <span className="text-muted-foreground">{r.patientNumber}</span> · {formatCurrency(r.amount)} · {r.reason ?? "Refund"}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={retry.isPending}
+              onClick={() =>
+                retry.mutate(r.id, {
+                  onSuccess: (res) => (res.refunded ? toast.success("Refund sent.") : toast.error("Razorpay didn't accept the refund yet. Try again later.")),
+                  onError: (err) => toast.error(errorText(err)),
+                })
+              }
+            >
+              Retry refund
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

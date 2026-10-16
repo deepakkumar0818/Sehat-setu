@@ -50,8 +50,13 @@ export function UserMenu() {
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => router.push(profileHref)}>
-            <UserIcon /> Profile
+            <UserIcon /> {user.role === "patient" ? "Health profile" : "Profile"}
           </DropdownMenuItem>
+          {user.role === "patient" && isSupabaseAuthEnabled() && (
+            <DropdownMenuItem onClick={() => router.push("/portal/settings")}>
+              <SettingsIcon /> Account settings
+            </DropdownMenuItem>
+          )}
           {user.role !== "patient" && (
             <DropdownMenuItem onClick={() => router.push("/settings")}>
               <SettingsIcon /> Settings

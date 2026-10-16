@@ -1,5 +1,6 @@
 "use client";
 
+import { isSupabaseAuthEnabled } from "@/lib/auth/config";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarIcon, MapPinIcon, SearchIcon } from "lucide-react";
@@ -17,6 +18,7 @@ interface DoctorSearchWidgetProps {
 export function DoctorSearchWidget({ className, compact }: DoctorSearchWidgetProps) {
   const router = useRouter();
   const branches = useDataStore((s) => s.db.branches);
+  const live = isSupabaseAuthEnabled();
   const [search, setSearch] = useState("");
   const [location, setLocation] = useState("all");
   const [date, setDate] = useState("any");
@@ -54,6 +56,9 @@ export function DoctorSearchWidget({ className, compact }: DoctorSearchWidgetPro
           />
         </div>
 
+        {/* Live site: the location and date filters come from sample data, so only the search is offered. */}
+        {!live && (
+        <>
         <div className="relative flex-1">
           <MapPinIcon className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Select value={location} onValueChange={setLocation}>
@@ -81,6 +86,8 @@ export function DoctorSearchWidget({ className, compact }: DoctorSearchWidgetPro
             </SelectContent>
           </Select>
         </div>
+        </>
+        )}
 
         <Button type="submit" size="lg" className="h-11 shrink-0">
           Find Doctors

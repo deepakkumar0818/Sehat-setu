@@ -1,53 +1,40 @@
-"use client";
-
-import Link from "next/link";
-import { useState } from "react";
-import { BuildingIcon, MapPinIcon } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { SearchInput } from "@/components/shared/search-input";
+import { connection } from "next/server";
+import { MapPinIcon, PhoneIcon } from "lucide-react";
+import { DemoClinicsPage } from "@/components/public/demo-clinics-page";
 import { EmptyState } from "@/components/shared/empty-state";
-import { useClinics } from "@/hooks/use-clinics";
+import { isSupabaseAuthEnabled } from "@/lib/auth/config";
+import { tryPublicDirectory } from "@/server/data/public-directory";
 
-export default function ClinicsPage() {
-  const [search, setSearch] = useState("");
-  const { data: clinics, isLoading } = useClinics(search);
-
+/** Live site: the clinic's real branches with their public contact details. */
+async function LiveClinicsPage() {
+  await connection();
+  const directory = await tryPublicDirectory();
   return (
     <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6 lg:px-8">
-      <div className="max-w-2xl">
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">Our Clinics</h1>
-        <p className="mt-2 text-muted-foreground">Sehat Setu partner clinics across the region — visit in person or book online.</p>
-      </div>
-
-      <SearchInput value={search} onChange={setSearch} placeholder="Search clinics or cities..." className="mt-6 sm:w-80" />
-
-      <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {isLoading ? (
-          Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-56 rounded-2xl" />)
-        ) : clinics && clinics.length > 0 ? (
-          clinics.map((clinic) => (
-            <div key={clinic.id} className="flex flex-col rounded-2xl border bg-card p-5">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent text-primary">
-                <BuildingIcon className="h-5 w-5" />
+      <h1 className="text-3xl font-bold tracking-tight text-foreground">Our clinics</h1>
+      <p className="mt-2 text-muted-foreground">Visit us in person, or sign in to request an appointment online.</p>
+      {!directory || directory.branches.length === 0 ? (
+        <EmptyState className="mt-8" title="Clinic details are unavailable right now" description="Please try again in a few minutes." />
+      ) : (
+        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {directory.branches.map((b) => {
+            const clinic = directory.clinics.find((c) => c.id === b.clinicId);
+            const doctors = directory.doctors.filter((d) => d.branchIds.includes(b.id)).length;
+            return (
+              <div key={b.id} className="rounded-2xl border bg-card p-5">
+                <p className="font-semibold text-foreground">{clinic ? `${clinic.name} — ${b.name}` : b.name}</p>
+                <p className="mt-2 flex items-start gap-1.5 text-sm text-muted-foreground"><MapPinIcon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> {b.address}, {b.city}</p>
+                <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground"><PhoneIcon className="h-4 w-4 shrink-0" aria-hidden /> {b.phone}</p>
+                <p className="mt-3 text-xs text-muted-foreground">{doctors} doctor{doctors === 1 ? "" : "s"} · Mon–Sat, 9:00 AM – 5:00 PM</p>
               </div>
-              <h2 className="mt-3 font-semibold text-foreground">{clinic.name}</h2>
-              <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground"><MapPinIcon className="h-3.5 w-3.5" /> {clinic.city}</p>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {clinic.specialties.slice(0, 3).map((s) => <Badge key={s} variant="outline">{s}</Badge>)}
-                {clinic.specialties.length > 3 && <Badge variant="outline">+{clinic.specialties.length - 3} more</Badge>}
-              </div>
-              <p className="mt-3 text-sm text-muted-foreground">{clinic.doctorCount} doctors · Mon–Sat, 9 AM – 5 PM</p>
-              <Button variant="outline" className="mt-4" asChild>
-                <Link href={`/clinics/${clinic.id}`}>View Clinic</Link>
-              </Button>
-            </div>
-          ))
-        ) : (
-          <EmptyState icon={BuildingIcon} title="No clinics found" description="Try a different search term." />
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
+}
+
+export default function ClinicsPage() {
+  return isSupabaseAuthEnabled() ? <LiveClinicsPage /> : <DemoClinicsPage />;
 }

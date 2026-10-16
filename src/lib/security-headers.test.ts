@@ -60,6 +60,21 @@ describe("header rules", () => {
     expect(dev.headers.some((h) => h.key === "Strict-Transport-Security")).toBe(false);
   });
 
+  it("Razorpay origins are allowed only when online payments are configured, and nothing else is opened", () => {
+    const off = contentSecurityPolicy({ isDev: false, supabaseOrigin: SUPABASE });
+    expect(off).not.toContain("razorpay");
+    expect(directive(off, "frame-src")).toBe("frame-src 'none'");
+    const on = contentSecurityPolicy({ isDev: false, supabaseOrigin: SUPABASE, razorpay: true });
+    expect(directive(on, "script-src")).toBe("script-src 'self' 'unsafe-inline' https://checkout.razorpay.com");
+    expect(directive(on, "frame-src")).toBe("frame-src https://api.razorpay.com https://checkout.razorpay.com");
+    expect(directive(on, "connect-src")).toBe(`connect-src 'self' ${SUPABASE} https://api.razorpay.com https://lumberjack.razorpay.com`);
+    expect(directive(on, "frame-ancestors")).toBe("frame-ancestors 'none'"); // the app itself still can't be framed
+    const pages = securityHeaders({ isDev: false, supabaseOrigin: SUPABASE, razorpay: true }).find((r) => r.source !== "/:path*")!;
+    const pp = pages.headers.find((h) => h.key === "Permissions-Policy")!.value;
+    expect(pp).toContain('payment=(self "https://api.razorpay.com" "https://checkout.razorpay.com")');
+    expect(pp).toMatch(/camera=\(\).*microphone=\(\)/);
+  });
+
   it("next.config.ts uses these rules and hides X-Powered-By", () => {
     const cfg = readFileSync(path.resolve(import.meta.dirname, "../../next.config.ts"), "utf8");
     expect(cfg).toMatch(/return securityHeaders\(\{ isDev: phase === PHASE_DEVELOPMENT_SERVER/);
@@ -92,6 +107,6 @@ describe("the app still fits the policy", () => {
 
   it("the only browser-side network client is Supabase Auth (covered by connect-src)", () => {
     const clients = sources.filter((s) => /createSupabaseBrowserClient\(|new WebSocket\(|EventSource\(/.test(s.src)).map((s) => s.rel).sort();
-    expect(clients).toEqual(["app/auth/set-password/page.tsx", "lib/supabase/browser.ts"]);
+    expect(clients).toEqual(["app/auth/set-password/page.tsx", "components/portal/live-portal-settings.tsx", "lib/supabase/browser.ts"]);
   });
 });

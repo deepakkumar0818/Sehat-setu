@@ -45,6 +45,10 @@ import type {
   PortalAppointmentScope,
   PortalBookingOptions,
   PortalClinicRecord,
+  PortalClinicContact,
+  CheckoutOptions,
+  OnlinePaymentResult,
+  RefundAttention,
   PortalDashboard,
   PortalInvoice,
   PortalLinkCode,
@@ -296,6 +300,10 @@ export const liveApi = {
     reschedule: (id: string, input: { date: string; time: string }) => apiPost<PortalAppointment>(`/api/v1/portal/appointments/${encodeURIComponent(id)}/reschedule`, input),
     invoices: (params: { page?: number; pageSize?: number } = {}) => apiGet<PortalPage<PortalInvoice>>("/api/v1/portal/invoices", params),
     record: () => apiGet<PortalClinicRecord>("/api/v1/portal/record"),
+    clinic: () => apiGet<PortalClinicContact>("/api/v1/portal/clinic"),
+    startPayment: (input: { purpose: "invoice" | "booking_fee"; id: string }) => apiPost<CheckoutOptions>("/api/v1/portal/payments/orders", input),
+    verifyPayment: (input: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) =>
+      apiPost<OnlinePaymentResult>("/api/v1/portal/payments/verify", input),
   },
   documents: {
     list: (params: ListDocumentsParams) => apiGet<DocumentPage>("/api/v1/documents", params),
@@ -410,11 +418,15 @@ export const liveApi = {
     noShow: (id: string) => apiPost<AppointmentWithNames>(`/api/v1/appointments/${encodeURIComponent(id)}/no-show`),
     reschedule: (id: string, date: string, time: string) => apiPatch<AppointmentWithNames>(`/api/v1/appointments/${encodeURIComponent(id)}`, { date, time }),
   },
+  onlinePayments: {
+    refundsNeedingAttention: () => apiGet<{ items: RefundAttention[] }>("/api/v1/online-payments/refunds"),
+    retryRefund: (id: string) => apiPost<{ refunded: boolean }>(`/api/v1/online-payments/${encodeURIComponent(id)}/refund`),
+  },
   bookingRequests: {
     list: (branchId?: string) => apiGet<BookingRequestPage>("/api/v1/booking-requests", { branchId }),
     approve: (id: string) => apiPost<{ id: string; status: "confirmed"; decidedAt: string }>(`/api/v1/booking-requests/${encodeURIComponent(id)}/approve`),
     reject: (id: string, reason: string) =>
-      apiPost<{ id: string; status: "rejected"; decidedAt: string }>(`/api/v1/booking-requests/${encodeURIComponent(id)}/reject`, { reason }),
+      apiPost<{ id: string; status: "rejected"; decidedAt: string; feeRefund?: "refunded" | "pending" | null }>(`/api/v1/booking-requests/${encodeURIComponent(id)}/reject`, { reason }),
   },
   doctors: {
     list: (params: ListDoctorsParams & { status?: "active" | "inactive" | "all" }) =>

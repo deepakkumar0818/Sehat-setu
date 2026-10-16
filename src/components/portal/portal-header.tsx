@@ -10,7 +10,7 @@ import { UserMenu } from "@/components/layout/user-menu";
 /** `live`: a real signed-in patient — no shortcut to the AI assistant, which isn't connected to clinic records yet. */
 export function PortalHeader({ live = false }: { live?: boolean }) {
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur">
+    <header className="z-20 flex h-14 items-center gap-3 border-b bg-background px-4 lg:px-6">
       <Link href="/portal" className="md:hidden"><Logo size="sm" /></Link>
       <div className="ml-auto flex items-center gap-1">
         {!live && (

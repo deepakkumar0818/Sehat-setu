@@ -39,8 +39,8 @@ describe("live portal navigation", () => {
     nav.pathname = "/portal/reports/abc";
     render(<PortalSidebar />);
     const sidebar = document.querySelector('nav[aria-label="Patient portal"]')!;
-    expect(sidebar.textContent).toBe("HomeAppointmentsBook AppointmentMy AppointmentsMy HealthHealth ProfileReportsDocumentsBills & Payments");
-    expect(hrefs(sidebar)).toEqual(["/portal", "/portal/book", "/portal/appointments", "/portal/profile", "/portal/reports", "/portal/documents", "/portal/payments"]);
+    expect(sidebar.textContent).toBe("HomeAppointmentsBook AppointmentMy AppointmentsMy HealthHealth ProfileReportsDocumentsBills & PaymentsAccountAccount Settings");
+    expect(hrefs(sidebar)).toEqual(["/portal", "/portal/book", "/portal/appointments", "/portal/profile", "/portal/reports", "/portal/documents", "/portal/payments", "/portal/settings"]);
     const active = [...sidebar.querySelectorAll('[aria-current="page"]')].map((a) => a.textContent);
     expect(active).toEqual(["Reports"]);
   });
@@ -54,7 +54,7 @@ describe("live portal navigation", () => {
     act(() => (bar.querySelector("button") as HTMLButtonElement).click());
     const sheet = document.querySelector('[role="dialog"]')!;
     expect(sheet.textContent).toContain("My Health");
-    expect(hrefs(sheet)).toEqual(["/portal", "/portal/book", "/portal/appointments", "/portal/profile", "/portal/reports", "/portal/documents", "/portal/payments"]);
+    expect(hrefs(sheet)).toEqual(["/portal", "/portal/book", "/portal/appointments", "/portal/profile", "/portal/reports", "/portal/documents", "/portal/payments", "/portal/settings"]);
   });
 
   it("never links to pages that aren't connected yet (AI assistant, consultations, prescriptions)", () => {

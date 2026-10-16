@@ -95,3 +95,27 @@ export function usePortalInvoices(page = 1) {
 export function usePortalRecord() {
   return useQuery({ queryKey: ["portal", "record"], queryFn: () => liveApi.portal.record() });
 }
+
+export function usePortalClinic() {
+  return useQuery({ queryKey: ["portal", "clinic"], queryFn: () => liveApi.portal.clinic(), staleTime: 10 * 60_000 });
+}
+
+/**
+ * Pay a bill or a booking fee online: the server creates the Razorpay order for
+ * what's due, Checkout collects the payment, and the server verifies the
+ * signature before recording it. Resolves null if the patient closes the window.
+ */
+export function usePortalPay() {
+  const qc = useQueryClient();
+  return useMutation({
+    meta: { inlineErrors: true },
+    mutationFn: async (input: { purpose: "invoice" | "booking_fee"; id: string }) => {
+      const { openCheckout } = await import("@/lib/razorpay-checkout");
+      const options = await liveApi.portal.startPayment(input);
+      const success = await openCheckout(options);
+      if (!success) return null;
+      return liveApi.portal.verifyPayment(success);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["portal"] }),
+  });
+}

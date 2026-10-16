@@ -32,7 +32,7 @@ export default function config(phase: string): NextConfig {
     },
     // CSP, frame protection, Referrer-Policy, Permissions-Policy, HSTS (src/lib/security-headers.ts).
     async headers() {
-      return securityHeaders({ isDev: phase === PHASE_DEVELOPMENT_SERVER, supabaseOrigin: getSupabasePublicConfig()?.url ?? null });
+      return securityHeaders({ isDev: phase === PHASE_DEVELOPMENT_SERVER, supabaseOrigin: getSupabasePublicConfig()?.url ?? null, razorpay: Boolean(process.env.RAZORPAY_KEY_ID?.trim()) });
     },
   };
 }

@@ -11,6 +11,7 @@ import {
   CalendarPlusIcon,
   CheckCircle2Icon,
   ClockIcon,
+  CreditCardIcon,
   FileTextIcon,
   FlaskConicalIcon,
   HeartPulseIcon,
@@ -51,6 +52,7 @@ import {
   usePortalCancel,
   usePortalDashboard,
   usePortalInvoices,
+  usePortalPay,
   usePortalRecord,
   usePortalReschedule,
   usePortalSlots,
@@ -123,6 +125,41 @@ function ageOf(dob: string): number | null {
 
 const GENDER_LABEL = { male: "Male", female: "Female", other: "Other" } as const;
 
+// --- Online payment (Razorpay Checkout; the server decides the amount) -------------
+
+function PayButton({ purpose, id, label, size = "sm" }: { purpose: "invoice" | "booking_fee"; id: string; label: string; size?: "sm" | "default" }) {
+  const pay = usePortalPay();
+  return (
+    <Button
+      size={size}
+      disabled={pay.isPending}
+      onClick={() => {
+        if (pay.isPending) return;
+        pay.mutate(
+          { purpose, id },
+          {
+            onSuccess: (r) => {
+              if (!r) return; // window closed: nothing happened
+              if (r.status === "refunded") toast.info("This booking is no longer open, so your payment is being refunded.");
+              else toast.success("Payment received. Thank you!");
+            },
+            onError: (e) => toast.error(e instanceof Error ? e.message : "Payment failed."),
+          }
+        );
+      }}
+    >
+      {pay.isPending ? <Loader2Icon className="h-4 w-4 animate-spin" /> : <CreditCardIcon />}
+      {label}
+    </Button>
+  );
+}
+
+function FeeBadge({ appt }: { appt: PortalAppointment }) {
+  if (appt.feePaid) return <Badge variant="outline" className="border-transparent bg-success/10 text-success">Fee paid</Badge>;
+  if (appt.feeRefunded) return <Badge variant="outline" className="border-transparent bg-muted text-muted-foreground">Fee refunded</Badge>;
+  return null;
+}
+
 // --- One appointment, with the actions the server allows ------------------------
 
 function AppointmentRow({ appt, actions = true }: { appt: PortalAppointment; actions?: boolean }) {
@@ -136,6 +173,7 @@ function AppointmentRow({ appt, actions = true }: { appt: PortalAppointment; act
           <p className="text-sm font-medium text-foreground">{formatDate(appt.date, "EEE, dd MMM yyyy")} · {formatTime12h(appt.time)}</p>
           <AppointmentStatusBadge status={appt.status} startsAt={appt.startsAt} />
           {appt.type === "online" && <Badge variant="outline" className="gap-1"><VideoIcon className="h-3 w-3" /> Online</Badge>}
+          <FeeBadge appt={appt} />
         </div>
         <p className="truncate text-sm text-muted-foreground">
           {appt.doctorName ?? "Doctor"}{appt.specialty ? ` · ${appt.specialty}` : ""}
@@ -145,8 +183,9 @@ function AppointmentRow({ appt, actions = true }: { appt: PortalAppointment; act
         </p>
         <RequestNote appt={appt} />
       </div>
-      {actions && (appt.canCancel || appt.canReschedule) && (
-        <div className="flex shrink-0 gap-2">
+      {actions && (appt.canCancel || appt.canReschedule || appt.canPayFee) && (
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {appt.canPayFee && appt.fee ? <PayButton purpose="booking_fee" id={appt.id} label={`Pay fee ${formatCurrency(appt.fee)}`} /> : null}
           {appt.canReschedule && <Button size="sm" variant="outline" onClick={() => setRescheduleOpen(true)}>Reschedule</Button>}
           {appt.canCancel && <Button size="sm" variant="outline" onClick={() => setCancelOpen(true)}>{appt.status === "pending_approval" ? "Withdraw" : "Cancel"}</Button>}
         </div>
@@ -529,12 +568,20 @@ function Fact({ label, value, className }: { label: string; value: string; class
 
 type Step = "branch" | "doctor" | "time" | "details" | "review" | "done";
 
-export function LivePortalBooking() {
+/**
+ * `initialDoctorId` (e.g. from "Book" on the public doctor directory): starts at the
+ * doctor's times when that doctor is bookable here, else at the normal first step.
+ * The page mounts this once the booking options are loaded, so the preset is read
+ * from them when the state is created.
+ */
+export function LivePortalBooking({ initialDoctorId }: { initialDoctorId?: string } = {}) {
   const options = usePortalBookingOptions();
   const book = usePortalBook();
   const submitting = useRef(false);
-  const [branchId, setBranchId] = useState("");
-  const [doctorId, setDoctorId] = useState("");
+  const preset = initialDoctorId ? options.data?.doctors.find((d) => d.id === initialDoctorId) : undefined;
+  const presetBranch = preset ? (preset.branchIds.length === 1 ? preset.branchIds[0] : options.data?.branches.length === 1 ? options.data.branches[0].id : "") : "";
+  const [branchId, setBranchId] = useState(presetBranch);
+  const [doctorId, setDoctorId] = useState(preset?.id ?? "");
   const [specialty, setSpecialty] = useState("all");
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
@@ -545,7 +592,7 @@ export function LivePortalBooking() {
   const [onset, setOnset] = useState("");
   const [severity, setSeverity] = useState("");
   const [requestId] = useState(() => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : ""));
-  const [step, setStep] = useState<Step | null>(null);
+  const [step, setStep] = useState<Step | null>(preset ? (presetBranch ? "time" : "branch") : null);
   const [error, setError] = useState<string | null>(null);
   const [booked, setBooked] = useState<PortalAppointment | null>(null);
 
@@ -626,6 +673,12 @@ export function LivePortalBooking() {
               )}
               <div className="flex items-center gap-2 pt-1"><span className="text-muted-foreground">Status</span> <AppointmentStatusBadge status={booked.status} /></div>
             </div>
+            {booked.canPayFee && booked.fee ? (
+              <div className="mx-auto max-w-sm space-y-2 rounded-md border p-3 text-sm">
+                <p className="text-foreground">Pay the consultation fee of {formatCurrency(booked.fee)} now, or at the clinic. If reception declines the request, it&apos;s refunded automatically.</p>
+                <PayButton purpose="booking_fee" id={booked.id} label={`Pay ${formatCurrency(booked.fee)} now`} size="default" />
+              </div>
+            ) : null}
             {booked.status === "pending_approval" && (
               <p className="mx-auto max-w-sm rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">
                 Your appointment isn&apos;t confirmed yet. Reception will review the request, and you&apos;ll see their answer in My Appointments.
@@ -798,7 +851,7 @@ export function LivePortalBooking() {
 
 function BookingFrame({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
+    <div className="mx-auto max-w-4xl space-y-5">
       <div>
         <h1 className="text-xl font-semibold text-foreground">Book an appointment</h1>
         <p className="text-sm text-muted-foreground">Choose a doctor and a free time. You&apos;ll get a reference straight away.</p>
@@ -1089,9 +1142,12 @@ function InvoiceRow({ inv }: { inv: PortalInvoice }) {
           {formatDate(inv.issuedAt)}{inv.branchName ? ` · ${inv.branchName}` : ""}{inv.appointmentDate ? ` · Visit ${formatDate(inv.appointmentDate)}` : ""}
         </p>
       </div>
-      <div className="shrink-0 text-right">
-        <p className="text-sm font-medium text-foreground">{formatCurrency(inv.status === "paid" ? inv.total : inv.balance)}</p>
-        <Badge variant="outline" className={cn("border-transparent", s.className)}>{s.label}</Badge>
+      <div className="flex shrink-0 items-center gap-3">
+        <div className="text-right">
+          <p className="text-sm font-medium text-foreground">{formatCurrency(inv.status === "paid" ? inv.total : inv.balance)}</p>
+          <Badge variant="outline" className={cn("border-transparent", s.className)}>{s.label}</Badge>
+        </div>
+        {inv.canPayOnline && <PayButton purpose="invoice" id={inv.id} label="Pay now" />}
       </div>
     </div>
   );
@@ -1104,7 +1160,7 @@ export function LivePortalPayments() {
     <div className="space-y-5">
       <div>
         <h1 className="text-xl font-semibold text-foreground">Bills & payments</h1>
-        <p className="text-sm text-muted-foreground">Your invoices from the clinic and what&apos;s been paid. Payments are taken at the clinic.</p>
+        <p className="text-sm text-muted-foreground">Your invoices from the clinic and what&apos;s been paid. Pay online where offered, or at the clinic.</p>
       </div>
       {q.isLoading ? (
         <Skeleton className="h-48 w-full" />

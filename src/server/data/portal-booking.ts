@@ -1,4 +1,6 @@
 import "server-only";
+import { onlinePaymentsConfigured } from "@/server/payments/razorpay";
+import { refundBookingFees } from "./online-payments";
 import { z } from "zod";
 import { AuthError } from "@/server/auth/errors";
 import type { PatientContext } from "@/server/auth/authorize";
@@ -11,7 +13,7 @@ import type {
   PortalClinicRecord,
   PortalDashboard,
   PortalInvoice,
-} from "@/lib/live-types";
+ PortalClinicContact, } from "@/lib/live-types";
 import { appointmentTypeToUi, genderToUi, type DbAppointmentStatus, type DbAppointmentType } from "./mappers";
 import { lookupNames } from "./documents";
 import { eligibleDocumentWhere, eligibleReportWhere } from "./portal";
@@ -60,12 +62,25 @@ async function describe(tx: TenantTx, rows: ApptRow[], now: Date): Promise<Porta
   const names = await lookupNames(tx, { branches: rows.map((r) => r.branchId), doctors: rows.map((r) => r.doctorId) });
   const specialties = await tx.doctorProfile.findMany({
     where: { id: { in: [...new Set(rows.map((r) => r.doctorId))] } },
-    select: { id: true, specialty: { select: { name: true } } },
+    select: { id: true, consultationFeePaise: true, specialty: { select: { name: true } } },
   });
   const specialty = new Map(specialties.map((d) => [d.id, d.specialty?.name ?? null]));
+  const feeOf = new Map(specialties.map((d) => [d.id, d.consultationFeePaise]));
+  // Online booking-fee state (the patient's own orders and bills, under RLS). Mirrors app.online_payable.
+  const ids = rows.map((r) => r.id);
+  const payOnline = onlinePaymentsConfigured();
+  const [orders, invoices] = await Promise.all([
+    tx.onlinePaymentOrder.findMany({ where: { appointmentId: { in: ids }, purpose: "BOOKING_FEE", status: { not: "CREATED" } }, select: { appointmentId: true, status: true } }),
+    tx.invoice.findMany({ where: { appointmentId: { in: ids } }, select: { appointmentId: true } }),
+  ]);
+  const billed = new Set(invoices.map((i) => i.appointmentId));
   return rows.map((r) => {
     const key = istDayKey(r.startsAt);
     const changeable = patientCanChange(r.status, r.startsAt, now);
+    const mine = orders.filter((o) => o.appointmentId === r.id);
+    const feePaid = mine.some((o) => o.status === "PAID");
+    const feeRefunded = !feePaid && mine.some((o) => o.status === "REFUNDED" || o.status === "REFUND_PENDING");
+    const fee = feeOf.get(r.doctorId) ?? 0;
     return {
       id: r.id,
       reference: appointmentReference(r.id),
@@ -85,6 +100,10 @@ async function describe(tx: TenantTx, rows: ApptRow[], now: Date): Promise<Porta
       canReschedule: changeable,
       // Reception's reason is written for the patient; shown only on a declined request.
       rejectionReason: r.status === "REJECTED" ? r.rejectionReason : null,
+      fee: fee / 100,
+      feePaid,
+      feeRefunded,
+      canPayFee: payOnline && changeable && r.status !== "CHECKED_IN" && fee >= 100 && mine.length === 0 && !billed.has(r.id),
     };
   });
 }
@@ -208,7 +227,7 @@ export async function bookMyAppointment(ctx: PatientContext, raw: unknown, db?: 
 }
 
 export async function cancelMyAppointment(ctx: PatientContext, id: string, db?: TenantTx, now = new Date()): Promise<PortalAppointment> {
-  return runPatientScoped(ctx, db, async (tx) => {
+  const result = await runPatientScoped(ctx, db, async (tx) => {
     const current = await loadOwn(ctx, tx, id);
     try {
       await tx.$executeRaw`SELECT app.patient_cancel_appointment(${current.id}::uuid)`;
@@ -217,6 +236,10 @@ export async function cancelMyAppointment(ctx: PatientContext, id: string, db?: 
     }
     return (await describe(tx, [await loadOwn(ctx, tx, id)], now))[0];
   });
+  // After the cancellation is committed: an advance fee paid online is refunded.
+  if (db || !result.feePaid) return result;
+  await refundBookingFees(id, "Withdrawn or cancelled by the patient", { patient: ctx });
+  return runPatientScoped(ctx, undefined, async (tx) => (await describe(tx, [await loadOwn(ctx, tx, id)], now))[0]);
 }
 
 export async function rescheduleMyAppointment(ctx: PatientContext, id: string, raw: unknown, db?: TenantTx, now = new Date()): Promise<PortalAppointment> {
@@ -244,6 +267,7 @@ async function describeInvoices(tx: TenantTx, rows: InvoiceRow[]): Promise<Porta
   const apptIds = rows.map((r) => r.appointmentId).filter((x): x is string => Boolean(x));
   const appts = apptIds.length ? await tx.appointment.findMany({ where: { id: { in: apptIds } }, select: { id: true, startsAt: true } }) : [];
   const apptDate = new Map(appts.map((a) => [a.id, istDayKey(a.startsAt).date]));
+  const payOnline = onlinePaymentsConfigured();
   return rows.map((r) => {
     const paidPaise = Math.min(paid.get(r.id) ?? 0, r.totalPaise);
     return {
@@ -257,6 +281,7 @@ async function describeInvoices(tx: TenantTx, rows: InvoiceRow[]): Promise<Porta
       status: r.status === "PAID" ? "paid" : r.status === "PARTIALLY_PAID" ? "partially_paid" : "pending",
       branchName: names.branch.get(r.branchId)?.name ?? null,
       appointmentDate: r.appointmentId ? (apptDate.get(r.appointmentId) ?? null) : null,
+      canPayOnline: payOnline && (r.status === "PENDING" || r.status === "PARTIALLY_PAID") && r.totalPaise - paidPaise >= 100,
     };
   });
 }
@@ -345,5 +370,17 @@ export async function getPortalDashboard(ctx: PatientContext, db?: TenantTx, now
       reportCount,
       documentCount,
     };
+  });
+}
+
+/** The patient's own clinic's public contact details (for Account Settings → Contact your clinic). */
+export async function getMyClinicContact(ctx: PatientContext, db?: TenantTx): Promise<PortalClinicContact> {
+  return runPatientScoped(ctx, db, async (tx) => {
+    const clinic = await tx.clinic.findFirst({
+      where: { id: ctx.clinicId },
+      select: { name: true, email: true, phone: true, addressLine: true, city: true, state: true, pincode: true },
+    });
+    if (!clinic) throw new AuthError("NOT_FOUND");
+    return clinic;
   });
 }

@@ -1170,3 +1170,56 @@ portal's appointment pages and the reception queue fail to load.
   `APPOINTMENT_BOOKED` only on approval. Patients have no in-app notifications
   and no email is sent (no provider for it): the portal shows "Awaiting
   receptionist approval", "Declined" with the reason, or "Request expired".
+
+## Online payments (Razorpay) and the public doctor directory
+
+**Status: migrations `20261031000000_public_doctor_directory` and
+`20261031000100_online_payments` applied to the configured Supabase project
+(2026-10-17; checksums match, existing appointments unchanged, directory readable
+by the runtime role without sign-in).** Verified beforehand on a throwaway
+PostgreSQL (PGlite): all 28 migrations apply from scratch; 33 payment/directory
+checks and the 39 booking-approval checks pass. Online payment stays off until
+the Razorpay keys are set (see Operator setup).
+
+* **What patients pay:** a clinic bill's outstanding balance (Bills & Payments →
+  Pay now), or the doctor's consultation fee for their own booking request or
+  confirmed visit (after booking, or from My Appointments). The amount is always
+  computed by the database (`app.online_payable`); the browser never sends one.
+* **Trust:** a payment is recorded only by `app.complete_online_payment`, called
+  after the server verifies Razorpay's HMAC signature: the Checkout callback
+  (`HMAC(order_id|payment_id, RAZORPAY_KEY_SECRET)`) or the webhook
+  (`X-Razorpay-Signature` = HMAC of the raw body with `RAZORPAY_WEBHOOK_SECRET`,
+  `POST /api/webhooks/razorpay`). It's idempotent per order and per Razorpay
+  payment id. It writes an ordinary `payments` row (method ONLINE, reference =
+  Razorpay payment id) under the same invoice lock as staff billing, and a booking
+  fee gets a numbered invoice for its appointment.
+* **Refunds:** a booking fee is refunded automatically when reception declines
+  the request or the patient withdraws or cancels before the visit (or if it was
+  paid twice, or after the booking closed). `app.begin_online_refund` marks it
+  REFUND_PENDING, the server asks Razorpay for a full refund, then
+  `app.finish_online_refund` records it (payment REFUNDED; that visit's fee
+  invoice becomes VOID). If Razorpay fails, it stays REFUND_PENDING and is listed
+  under Pending Patient Bookings → "Online refunds waiting" with a Retry button.
+  Refunding other payments needs `refund.manage` / `billing.manage`.
+* **Data:** the runtime role can only read `online_payment_orders` (patients
+  their own; billing/appointment staff their clinic and branch). Card and UPI
+  details never reach the app: Razorpay Checkout collects them in its own frame.
+  Order notes carry ids only. Secrets are server-only, never logged; errors keep
+  Razorpay's status and code only.
+* **Browser policy:** only when `RAZORPAY_KEY_ID` is set at build time, the CSP
+  allows Checkout (`checkout.razorpay.com` script, `api/checkout.razorpay.com`
+  frames, `api/lumberjack.razorpay.com` connections, `cdn.razorpay.com` images),
+  the Payment Request API for those origins, and popups
+  (`Cross-Origin-Opener-Policy: same-origin-allow-popups`).
+* **Public directory:** `app.public_doctor_directory()` (SECURITY DEFINER, no
+  sign-in) returns listing fields of ACTIVE doctors at ACTIVE branches only:
+  name, specialty, department, qualifications, experience, fee, online flag,
+  bio, branch names, addresses and phones. It never returns registration numbers,
+  emails, user ids, patients or schedules. With Supabase configured, `/doctors`,
+  doctor profiles, `/clinics` and the home page use it; sample statistics and
+  testimonials are hidden. "Book" goes to `/portal/book?doctor=…` (sign in or
+  register first).
+* **Operator setup:** set `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` and
+  `RAZORPAY_WEBHOOK_SECRET` in Vercel (Test Mode keys first) and redeploy. Add the
+  webhook in the Razorpay Dashboard with events `payment.captured`, `order.paid`
+  and `refund.processed`. Keep automatic capture on (the default for orders).
