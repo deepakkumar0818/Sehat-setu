@@ -42,6 +42,25 @@ export function getSupabasePublicConfig(): SupabasePublicConfig | null {
   });
 }
 
+/** Set to "true" only for a deliberate demo deployment (fictional data, no database). */
+export const ALLOW_DEMO_BUILD_ENV = "SEHAT_ALLOW_DEMO_BUILD";
+
+/**
+ * Why a production build must stop, or null. The public Supabase values are
+ * inlined into the bundles at build time, so a build without them would ship
+ * the demo-persona login and mock data instead of failing: production builds
+ * therefore require them, unless a demo deployment is explicitly intended.
+ */
+export function productionAuthConfigProblem(env: Record<string, string | undefined>): string | null {
+  const config = parseSupabasePublicConfig({ url: env.NEXT_PUBLIC_SUPABASE_URL, publishableKey: env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY });
+  if (config || env[ALLOW_DEMO_BUILD_ENV] === "true") return null;
+  return (
+    "Refusing to build for production without Supabase Auth: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY " +
+    "are missing or invalid, so the app would silently run in demo mode. Set them, or set " +
+    `${ALLOW_DEMO_BUILD_ENV}=true for an intentional demo deployment.`
+  );
+}
+
 /** True when real Supabase authentication is active (and the demo persona login is disabled). */
 export function isSupabaseAuthEnabled(): boolean {
   return getSupabasePublicConfig() !== null;

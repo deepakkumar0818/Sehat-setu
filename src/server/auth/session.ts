@@ -7,9 +7,11 @@ import { isSupabaseAuthEnabled } from "@/lib/auth/config";
 import { staffRoutePermissions } from "@/lib/auth/routes";
 import { primaryUserRole, type ServerSessionUser } from "@/lib/auth/session-user";
 import { createSupabaseServerClient, hasSupabaseSessionCookie } from "@/server/supabase";
-import { pinUserId, withIdentityDb } from "@/server/db/tenant";
+import { withIdentityDb } from "@/server/db/tenant";
+import { findUserAndPin, loadMembershipsAndLinks } from "@/server/auth/identity-db";
 import { AuthError, isAuthError } from "@/server/auth/errors";
 import { recordAuditEvent } from "@/server/audit";
+import { reportEvent } from "@/server/monitoring";
 import { findOrLinkUser } from "@/server/auth/link-user";
 import {
   createAuthService,
@@ -19,7 +21,6 @@ import {
   type AuthUserLookup,
   type Identity,
   type PatientContext,
-  type RoleKey,
   type TenantContext,
   type VerifiedAuthUser,
 } from "@/server/auth/authorize";
@@ -32,7 +33,7 @@ async function getAuthUser(): Promise<AuthUserLookup> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.auth.getUser();
   if (data.user) {
-    return { status: "ok", user: { id: data.user.id, email: data.user.email ?? null, emailConfirmed: Boolean(data.user.email_confirmed_at) } };
+    return { status: "ok", user: { id: data.user.id, email: data.user.email ?? null, emailConfirmed: Boolean(data.user.email_confirmed_at), metadata: data.user.user_metadata ?? {} } };
   }
   if (error?.name === "AuthRetryableFetchError") throw new AuthError("AUTH_UNAVAILABLE");
   return { status: (await hasSupabaseSessionCookie()) ? "expired" : "none" };
@@ -46,9 +47,9 @@ async function getAuthUser(): Promise<AuthUserLookup> {
 async function loadIdentity(authUser: VerifiedAuthUser): Promise<Identity | null> {
   let justLinked = false;
   const identity = await withIdentityDb(authUser.id, async (tx) => {
-    const select = { id: true, email: true, name: true, status: true, authProviderId: true } as const;
+    // findUserAndPin also pins app.user_id when it finds the row (one round-trip instead of two).
     const { user, linkedNow } = await findOrLinkUser(authUser, {
-      findByAuthId: () => tx.user.findUnique({ where: { authProviderId: authUser.id }, select }),
+      findByAuthId: () => findUserAndPin(tx, authUser.id),
       link: async () => {
         const [{ linked }] = await tx.$queryRaw<{ linked: string | null }[]>`SELECT app.link_auth_user(${authUser.id}, ${authUser.email})::text AS linked`;
         return linked;
@@ -57,22 +58,8 @@ async function loadIdentity(authUser: VerifiedAuthUser): Promise<Identity | null
     justLinked = linkedNow;
     if (!user || user.authProviderId !== authUser.id) return null;
 
-    await pinUserId(tx, user.id);
-    const memberships = await tx.clinicMembership.findMany({
-      where: { userId: user.id },
-      select: {
-        id: true,
-        clinicId: true,
-        branchId: true,
-        status: true,
-        clinic: { select: { name: true, status: true } },
-        role: { select: { key: true, permissions: { select: { permission: { select: { key: true } } } } } },
-      },
-    });
-
-    // Own rows only (RLS: doctor_profiles/patients where userId = this user).
-    const doctorProfiles = await tx.doctorProfile.findMany({ where: { userId: user.id, status: "ACTIVE" }, select: { id: true, clinicId: true } });
-    const patientLinks = await tx.patient.findMany({ where: { userId: user.id, status: "ACTIVE" }, select: { id: true, clinicId: true } });
+    // Own rows only (RLS: memberships/doctor_profiles/patients where userId = this user).
+    const { memberships, doctorProfiles, patientLinks } = await loadMembershipsAndLinks(tx, user.id);
 
     return {
       userId: user.id,
@@ -82,17 +69,8 @@ async function loadIdentity(authUser: VerifiedAuthUser): Promise<Identity | null
       name: user.name,
       status: user.status,
       doctorProfiles,
-      patientLinks: patientLinks.map((p) => ({ patientId: p.id, clinicId: p.clinicId })),
-      memberships: memberships.map((m) => ({
-        id: m.id,
-        clinicId: m.clinicId,
-        clinicName: m.clinic.name,
-        clinicStatus: m.clinic.status,
-        branchId: m.branchId,
-        roleKey: m.role.key as RoleKey,
-        status: m.status,
-        permissions: m.role.permissions.map((rp) => rp.permission.key),
-      })),
+      patientLinks,
+      memberships,
     };
   });
   if (justLinked && identity) {
@@ -115,9 +93,26 @@ export const requireStaffContext = cache(() => authService.requireStaffContext()
 export const requirePatientIdentity = cache(() => authService.requirePatientIdentity());
 export const requirePatientContext = cache(() => authService.requirePatientContext());
 
+/**
+ * The Supabase-verified user behind this session, whether or not they have an
+ * application account yet (P6.4: a self-registered patient redeeming a linking
+ * code). Validated by the Auth server (getUser()); grants nothing by itself.
+ */
+export const requireAuthUser = cache(async (): Promise<VerifiedAuthUser> => {
+  if (!isSupabaseAuthEnabled()) throw new AuthError("AUTH_NOT_CONFIGURED");
+  const lookup = await getAuthUser();
+  if (lookup.status === "none") throw new AuthError("UNAUTHENTICATED");
+  if (lookup.status === "expired") throw new AuthError("SESSION_EXPIRED");
+  return lookup.user;
+});
+
+/** Where a signed-in login with no application account goes: the linking-code page (P6.4 self-registration). */
+export const LINK_ACCOUNT_PATH = "/link-account";
+
 /** Audit an authorization failure (unauthenticated visits are not logged — the proxy turns those away). */
 async function auditDenied(err: AuthError, resource: string): Promise<void> {
   if (err.code === "AUTH_NOT_CONFIGURED" || err.code === "UNAUTHENTICATED") return;
+  reportEvent("access_denied", { scope: resource, reason: err.code, status: err.status });
   const identity = await requireIdentity().catch(() => null);
   await recordAuditEvent({
     action: "access.denied",
@@ -137,6 +132,20 @@ export async function requireStaff(permission?: string | readonly string[], reso
       throw new AuthError("FORBIDDEN");
     }
     return ctx;
+  } catch (err) {
+    if (isAuthError(err)) await auditDenied(err, resource);
+    throw err;
+  }
+}
+
+/**
+ * For patient-portal Route Handlers: the verified patient context (P6.3). The
+ * patient record ids come only from the server-side link; refusals are audited
+ * like staff refusals (unauthenticated requests are not).
+ */
+export async function requirePatient(resource: string): Promise<PatientContext> {
+  try {
+    return await requirePatientContext();
   } catch (err) {
     if (isAuthError(err)) await auditDenied(err, resource);
     throw err;
@@ -200,6 +209,8 @@ export async function guardStaffRoute(pathname: string | null): Promise<TenantCo
       const destination = await noMembershipRedirect();
       if (destination) redirect(destination);
     }
+    // A self-registered login (no application account until a clinic code is redeemed).
+    if (isAuthError(err) && err.code === "NOT_PROVISIONED") redirect(LINK_ACCOUNT_PATH);
     if (isAuthError(err)) await auditDenied(err, pathname ?? "/dashboard");
     redirectOnAuthError(err, pathname ?? "/dashboard");
   }
@@ -225,6 +236,7 @@ export async function guardPortalRoute(): Promise<PatientContext | null> {
       const identity = await requireIdentity().catch(() => null);
       if (identity && homeFor(identity) === "staff") redirect("/dashboard");
     }
+    if (isAuthError(err) && err.code === "NOT_PROVISIONED") redirect(LINK_ACCOUNT_PATH);
     if (isAuthError(err)) await auditDenied(err, "/portal");
     redirectOnAuthError(err, "/portal");
   }

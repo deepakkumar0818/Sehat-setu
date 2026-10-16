@@ -15,9 +15,16 @@ import { formatDate } from "@/lib/format";
 import { useReport, useShareReport } from "@/hooks/use-clinical";
 import { useSummarizeReport } from "@/hooks/use-ai";
 import { cn } from "@/lib/utils";
+import { LiveLabReportDetail } from "@/components/lab-reports/live-lab-report-detail";
+import { useLiveData } from "@/lib/data-source";
 
 export default function ReportDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  // Live: the database report (no fake download/print, no AI panel). Demo: the original mock screen.
+  return useLiveData() ? <LiveLabReportDetail id={id} /> : <DemoReportDetail id={id} />;
+}
+
+function DemoReportDetail({ id }: { id: string }) {
   const { data: report, isLoading, isError, refetch } = useReport(id);
   const shareReport = useShareReport();
   const summarize = useSummarizeReport();

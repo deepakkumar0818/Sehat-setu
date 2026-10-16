@@ -31,9 +31,16 @@ export default async function AccessDeniedPage({ searchParams }: { searchParams:
             <Link href="/invitations">Check for invitations</Link>
           </Button>
         )}
-        <Button asChild variant="outline">
-          <Link href="/dashboard">Go to dashboard</Link>
-        </Button>
+        {(reason === "patient_not_linked" || reason === "not_provisioned") && (
+          <Button asChild>
+            <Link href="/link-account">Finish setting up my account</Link>
+          </Button>
+        )}
+        {reason !== "patient_not_linked" && reason !== "not_provisioned" && (
+          <Button asChild variant="outline">
+            <Link href="/dashboard">Go to dashboard</Link>
+          </Button>
+        )}
         <form action="/auth/signout" method="post">
           <Button type="submit" variant="ghost">
             Sign in as someone else

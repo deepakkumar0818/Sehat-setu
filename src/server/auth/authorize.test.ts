@@ -228,13 +228,27 @@ describe("patient portal context", () => {
     expect(ctx).toMatchObject({ clinicId: CLINIC_A, patientIds: ["pt-1"] });
   });
 
-  it("refuses a PATIENT membership with no linked record", async () => {
-    await expectCode(service({ identity: identity([patientMembership]) }).requirePatientContext(), "NO_MEMBERSHIP");
+  it("refuses a PATIENT membership with no linked record (its own state, so the portal can't redirect-loop)", async () => {
+    await expectCode(service({ identity: identity([patientMembership]) }).requirePatientContext(), "PATIENT_NOT_LINKED");
   });
 
   it("ignores linked records in clinics without a PATIENT membership", async () => {
     const id = identity([patientMembership], { patientLinks: [{ patientId: "pt-b", clinicId: CLINIC_B }] });
-    await expectCode(service({ identity: id }).requirePatientContext(), "NO_MEMBERSHIP");
+    await expectCode(service({ identity: id }).requirePatientContext(), "PATIENT_NOT_LINKED");
+  });
+
+  it("refuses accounts without an active PATIENT membership, disabled accounts and suspended clinics", async () => {
+    const link = { patientLinks: [{ patientId: "pt-1", clinicId: CLINIC_A }] };
+    await expectCode(service({ identity: identity([membership()], link) }).requirePatientContext(), "NO_MEMBERSHIP"); // staff only
+    await expectCode(service({ identity: identity([membership({ roleKey: "PATIENT", status: "INACTIVE" })], link) }).requirePatientContext(), "NO_MEMBERSHIP"); // revoked membership
+    await expectCode(service({ identity: identity([membership({ roleKey: "PATIENT", clinicStatus: "SUSPENDED" })], link) }).requirePatientContext(), "NO_MEMBERSHIP");
+    await expectCode(service({ identity: identity([patientMembership], { ...link, status: "DISABLED" }) }).requirePatientContext(), "ACCOUNT_DISABLED");
+  });
+
+  it("takes patient ids only from the server-side link, never from a requested clinic", async () => {
+    const id = identity([patientMembership, membership({ roleKey: "PATIENT", clinicId: CLINIC_B, clinicName: "Other" })], { patientLinks: [{ patientId: "pt-1", clinicId: CLINIC_A }] });
+    const ctx = await service({ identity: id, getRequestedClinicId: async () => CLINIC_B }).requirePatientContext();
+    expect(ctx).toMatchObject({ clinicId: CLINIC_A, patientIds: ["pt-1"] });
   });
 
   it("never lets a patient's billing.view act as a staff permission", async () => {

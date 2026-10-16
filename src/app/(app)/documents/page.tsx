@@ -13,6 +13,13 @@ import { formatDate } from "@/lib/format";
 import { useDocuments } from "@/hooks/use-clinical";
 import { useDataStore } from "@/store/data-store";
 import type { DocumentCategory } from "@/types";
+import { LiveDocuments } from "@/components/documents/live-documents";
+import { useLiveData } from "@/lib/data-source";
+
+export default function DocumentsPage() {
+  // Live (Supabase mode): private patient files from the database (P6.2). Demo mode: the original mock screen.
+  return useLiveData() ? <LiveDocuments /> : <DemoDocumentsPage />;
+}
 
 const CATEGORIES: { value: DocumentCategory | "all"; label: string }[] = [
   { value: "all", label: "All categories" },
@@ -24,7 +31,7 @@ const CATEGORIES: { value: DocumentCategory | "all"; label: string }[] = [
   { value: "other", label: "Other" },
 ];
 
-export default function DocumentsPage() {
+function DemoDocumentsPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<DocumentCategory | "all">("all");
   const [page, setPage] = useState(1);

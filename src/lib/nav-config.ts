@@ -26,6 +26,8 @@ import {
   Building2,
   Layers,
   ShieldCheck,
+  CalendarPlus,
+  HeartPulse,
   type LucideIcon,
 } from "lucide-react";
 
@@ -111,6 +113,7 @@ const doctorNav: NavGroup[] = [
       { label: "Consultations", href: "/consultations", icon: Stethoscope },
       { label: "Prescriptions", href: "/prescriptions", icon: FileSignature },
       { label: "Reports", href: "/reports", icon: FlaskConical },
+      { label: "Documents", href: "/documents", icon: FolderOpen },
       { label: "Patients", href: "/patients", icon: Users },
     ],
   },
@@ -131,6 +134,7 @@ const receptionistNav: NavGroup[] = [
       { label: "Appointments", href: "/appointments", icon: CalendarDays },
       { label: "Waiting Room", href: "/waiting-room", icon: Armchair, badgeKey: "waitingCount" },
       { label: "Billing", href: "/billing", icon: Receipt },
+      { label: "Documents", href: "/documents", icon: FolderOpen },
     ],
   },
   {
@@ -148,6 +152,8 @@ const nurseNav: NavGroup[] = [
       { label: "Waiting Room", href: "/waiting-room", icon: Armchair, badgeKey: "waitingCount" },
       { label: "Patients", href: "/patients", icon: Users },
       { label: "Appointments", href: "/appointments", icon: CalendarDays },
+      { label: "Lab reports", href: "/reports", icon: FlaskConical },
+      { label: "Documents", href: "/documents", icon: FolderOpen },
     ],
   },
   { items: [{ label: "Settings", href: "/settings", icon: Settings }] },
@@ -191,7 +197,7 @@ const branchManagerNav: NavGroup[] = [
     items: [
       { label: "Inventory", href: "/inventory", icon: Boxes, badgeKey: "lowStockCount" }, // view-only for their branch
       { label: "Billing", href: "/billing", icon: Receipt },
-      { label: "Reports", href: "/reports", icon: FlaskConical },
+      { label: "Documents", href: "/documents", icon: FolderOpen }, // administrative files only (P6.2)
     ],
   },
   { items: [{ label: "Settings", href: "/settings", icon: Settings }] },
@@ -247,3 +253,61 @@ export const PATIENT_PORTAL_NAV: NavLeaf[] = [
   { label: "AI Assistant", href: "/portal/ai-assistant", icon: Sparkles },
   { label: "Profile", href: "/portal/profile", icon: User },
 ];
+
+/**
+ * The portal for a signed-in patient (live data): every page here is backed by
+ * the clinic database and shows only the patient's own records. Anything else
+ * under /portal (consultations, prescriptions, AI assistant) is replaced by a
+ * "not available yet" notice — never demo data.
+ */
+export interface PortalNavSection {
+  /** Group heading (none for top-level links). */
+  label?: string;
+  items: NavLeaf[];
+}
+
+export const LIVE_PORTAL_SECTIONS: PortalNavSection[] = [
+  { items: [{ label: "Home", href: "/portal", icon: Home }] },
+  {
+    label: "Appointments",
+    items: [
+      { label: "Book Appointment", href: "/portal/book", icon: CalendarPlus },
+      { label: "My Appointments", href: "/portal/appointments", icon: CalendarDays },
+    ],
+  },
+  {
+    label: "My Health",
+    items: [
+      { label: "Health Profile", href: "/portal/profile", icon: HeartPulse },
+      { label: "Reports", href: "/portal/reports", icon: FlaskConical },
+      { label: "Documents", href: "/portal/documents", icon: FileText },
+    ],
+  },
+  { items: [{ label: "Bills & Payments", href: "/portal/payments", icon: Wallet }] },
+];
+
+export const LIVE_PORTAL_NAV: NavLeaf[] = LIVE_PORTAL_SECTIONS.flatMap((s) => s.items);
+
+export const LIVE_PORTAL_PATHS = LIVE_PORTAL_NAV.map((i) => i.href);
+
+/** Pages that light up the "My Health" tab on the phone's bottom bar. */
+export const MY_HEALTH_PATHS = ["/portal/profile", "/portal/reports", "/portal/documents"] as const;
+
+/** The active link for a path: exact for Home, prefix for the rest. */
+export function isPortalLinkActive(href: string, pathname: string): boolean {
+  return pathname === href || (href !== "/portal" && pathname.startsWith(`${href}/`));
+}
+
+/** Navigation sections for the current data source (demo: one flat section). */
+export function portalNavSections(live: boolean): PortalNavSection[] {
+  return live ? LIVE_PORTAL_SECTIONS : [{ items: PATIENT_PORTAL_NAV }];
+}
+
+export function isLivePortalPath(pathname: string): boolean {
+  return pathname === "/portal" || LIVE_PORTAL_PATHS.some((p) => p !== "/portal" && (pathname === p || pathname.startsWith(`${p}/`)));
+}
+
+/** The portal navigation for the current data source (live: database-backed pages only). */
+export function portalNav(live: boolean): NavLeaf[] {
+  return live ? LIVE_PORTAL_NAV : PATIENT_PORTAL_NAV;
+}

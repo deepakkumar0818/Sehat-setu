@@ -127,9 +127,11 @@ describe("reading invoices and payments", () => {
       FROM invoices i WHERE i."clinicId" = $1 AND i.status IN ('PENDING', 'PARTIALLY_PAID')`;
     const summary = await getBillingSummary(adminA);
     expect(Math.round(summary.outstandingBalance * 100)).toBe(await n(outstandingSql, [FIX.clinicA]));
-    expect(summary.totalExpensesThisMonth).toBeNull();
+    // Recorded expenses this IST month (the administrator holds billing.manage); null without expense permissions.
+    expect(typeof summary.totalExpensesThisMonth).toBe("number");
     expect(summary.canCreateInvoice).toBe(true);
     const branch = await getBillingSummary(managerWakad);
+    expect(branch.totalExpensesThisMonth).toBeNull();
     expect(Math.round(branch.outstandingBalance * 100)).toBe(await n(`${outstandingSql} AND i."branchId" = $2`, [FIX.clinicA, FIX.wakad]));
     expect(branch.canCreateInvoice).toBe(false);
   });

@@ -17,8 +17,15 @@ import { formatDate } from "@/lib/format";
 import { useReports } from "@/hooks/use-clinical";
 import type { LabReportStatus, LabReportType } from "@/types";
 import type { LabReportWithNames } from "@/services/clinical";
+import { LiveLabReports } from "@/components/lab-reports/live-lab-reports";
+import { useLiveData } from "@/lib/data-source";
 
 export default function ReportsPage() {
+  // Live (Supabase mode): lab reports from the database (P6.2). Demo mode: the original mock screen.
+  return useLiveData() ? <LiveLabReports /> : <DemoReportsPage />;
+}
+
+function DemoReportsPage() {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [type, setType] = useState<LabReportType | "all">("all");

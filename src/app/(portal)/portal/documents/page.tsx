@@ -8,8 +8,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatDate } from "@/lib/format";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useDocuments } from "@/hooks/use-clinical";
+import { useLiveData } from "@/lib/data-source";
+import { LivePortalDocuments } from "@/components/portal/live-portal";
 
 export default function PortalDocumentsPage() {
+  // Live: result files of the patient's shared reports (P6.3). Demo mode: the original mock list.
+  return useLiveData() ? <LivePortalDocuments /> : <DemoPortalDocumentsPage />;
+}
+
+function DemoPortalDocumentsPage() {
   const user = useCurrentUser();
   const { data, isLoading } = useDocuments({ patientId: user?.patientId, pageSize: 50 });
 

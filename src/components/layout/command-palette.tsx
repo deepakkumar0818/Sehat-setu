@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/command";
 import { useUiStore } from "@/store/ui-store";
 import { useGlobalSearch } from "@/hooks/use-search";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useCurrentUser } from "@/hooks/use-current-user";
 
 export function CommandPalette() {
@@ -29,7 +30,7 @@ export function CommandPalette() {
   const setOpen = useUiStore((s) => s.setCommandPaletteOpen);
   const setPendingAiQuestion = useUiStore((s) => s.setPendingAiQuestion);
   const [query, setQuery] = useState("");
-  const { data: results } = useGlobalSearch(query);
+  const { data: results } = useGlobalSearch(useDebouncedValue(query)); // one request once typing pauses
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {

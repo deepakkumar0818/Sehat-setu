@@ -13,9 +13,16 @@ import { formatDate } from "@/lib/format";
 import { useReport } from "@/hooks/use-clinical";
 import { useSummarizeReport } from "@/hooks/use-ai";
 import { cn } from "@/lib/utils";
+import { useLiveData } from "@/lib/data-source";
+import { LivePortalReportDetail } from "@/components/portal/live-portal";
 
 export default function PortalReportDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  // Live: the patient's own shared report, re-authorized on every request (P6.3). Demo mode: the original mock report.
+  return useLiveData() ? <LivePortalReportDetail id={id} /> : <DemoPortalReportDetail id={id} />;
+}
+
+function DemoPortalReportDetail({ id }: { id: string }) {
   const { data: report, isLoading, isError, refetch } = useReport(id);
   const summarize = useSummarizeReport();
 

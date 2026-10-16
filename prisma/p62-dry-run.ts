@@ -73,7 +73,8 @@ async function main() {
     // A clinic-A patient with an appointment with DR-01, one without, and the nurse fixture's status.
     const assigned = (await c.query(`SELECT a."patientId" AS id FROM appointments a WHERE a."doctorId" = $1 ORDER BY a."startsAt" LIMIT 1`, [doctor1])).rows[0]?.id as string;
     const unassigned = (await c.query(`SELECT p.id FROM patients p WHERE p."clinicId" = $1 AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a."patientId" = p.id AND a."doctorId" = $2) ORDER BY p."patientNumber" LIMIT 1`, [clinicA, doctor1])).rows[0]?.id as string;
-    if (!assigned || !unassigned) throw new Error("fixture patients not found (expected seed data)");
+    const patientB = (await c.query(`SELECT p.id FROM patients p WHERE p."clinicId" = $1 ORDER BY p."patientNumber" LIMIT 1`, [demoId("clinic:NIR")])).rows[0]?.id as string;
+    if (!assigned || !unassigned || !patientB) throw new Error("fixture patients not found (expected seed data)");
     const nurseActive = Boolean((await c.query(`SELECT 1 FROM clinic_memberships m WHERE m."userId" = $1 AND m.status = 'ACTIVE'`, [demoId("user:ST-05")])).rowCount);
     const permsBefore = (await c.query(`SELECT key, name, module, description FROM permissions ORDER BY key`)).rows;
 
@@ -169,6 +170,15 @@ async function main() {
       record("administrator: clinical and administrative visible in every branch", (await vis(unassigned, "AAR-KTH")) && (await vis(unassigned, "AAR-WKD")) && (await adminVis("AAR-KTH")));
       await pin("ST-07", "NIR");
       record("other clinic's administrator: nothing visible", !(await vis(assigned, "AAR-KTH")) && !(await adminVis("AAR-KTH")));
+      // Regression (helpers must check the clinic themselves, not rely on the calling policy): each id is checked separately.
+      record("regression: other clinic's patient with the caller's own branch NOT visible", !(await vis(assigned, "NIR-IND")));
+      record("regression: caller's own patient with another clinic's branch NOT visible", !(await vis(patientB, "AAR-KTH")) && !(await vis(patientB, "AAR-WKD")));
+      record("regression: same-clinic access still works (clinic B admin, clinic B ids)", (await vis(patientB, "NIR-IND")) && (await adminVis("NIR-IND")));
+      await pin("ST-01", "AAR");
+      record("regression: clinic A admin — clinic B patient/branch NOT visible, own still visible",
+        !(await vis(patientB, "AAR-KTH")) && !(await vis(assigned, "NIR-IND")) && !(await adminVis("NIR-IND")) && (await vis(assigned, "AAR-KTH")));
+      await pin("DR-01", "AAR");
+      record("regression: doctor — own patient with another clinic's branch NOT visible", !(await vis(assigned, "NIR-IND")) && (await vis(assigned, "AAR-KTH")));
       await pin("", "AAR");
       record("no user pinned: nothing visible", !(await vis(assigned, "AAR-KTH")) && !(await adminVis("AAR-KTH")));
       if (nurseActive) {

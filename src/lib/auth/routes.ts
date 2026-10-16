@@ -18,8 +18,9 @@ export const STAFF_ROUTE_PERMISSIONS: Record<string, readonly string[]> = {
   "/waiting-room": ["checkin.manage", "appointment.view", "own_appointments.view"],
   "/consultations": ["medical_record.view", "patient.medical_record.view"],
   "/prescriptions": ["prescription.view", "prescription.manage", "medicine.dispense"],
-  "/reports": ["lab_report.view", "lab.manage", "medical_record.view"],
-  "/documents": ["medical_record.view", "patient.medical_record.view"],
+  // P6.2: lab_report.upload lets upload-only roles add results; the database decides what anyone can read.
+  "/reports": ["lab_report.view", "lab.manage", "medical_record.view", "patient.medical_record.view", "lab_report.upload"],
+  "/documents": ["medical_record.view", "patient.medical_record.view", "lab_report.view", "lab.manage", "patient_document.view", "patient_document.upload", "lab_report.upload"],
   "/doctor-roster": ["doctor.view", "doctor.manage"],
   "/staff": ["staff.view", "staff.manage", "user.view"],
   "/inventory": ["pharmacy.manage", "pharmacy.inventory.manage", "pharmacy.inventory.view"],
@@ -34,8 +35,11 @@ export const STAFF_ROUTE_PERMISSIONS: Record<string, readonly string[]> = {
 
 export const PORTAL_PREFIX = "/portal";
 
-/** Pages for any signed-in user, before they belong to a clinic (e.g. accepting a staff invitation). */
-export const IDENTITY_PREFIXES: readonly string[] = ["/invitations"];
+/**
+ * Pages for any signed-in user, before they belong to a clinic (accepting a
+ * staff invitation; P6.4: a self-registered patient entering a clinic code).
+ */
+export const IDENTITY_PREFIXES: readonly string[] = ["/invitations", "/link-account"];
 
 export const PROTECTED_PREFIXES: readonly string[] = [...Object.keys(STAFF_ROUTE_PERMISSIONS), PORTAL_PREFIX, ...IDENTITY_PREFIXES];
 

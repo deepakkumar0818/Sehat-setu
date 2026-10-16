@@ -1,5 +1,7 @@
 "use client";
 
+import { useLiveData } from "@/lib/data-source";
+import { LiveSettings } from "@/components/clinic-admin/live-settings";
 import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -24,7 +26,7 @@ function SettingRow({ label, description, children }: { label: string; descripti
   );
 }
 
-export default function SettingsPage() {
+function DemoSettingsPage() {
   const settings = useSettingsStore();
 
   const save = () => toast.success("Settings saved.");
@@ -181,4 +183,9 @@ export default function SettingsPage() {
       </Tabs>
     </div>
   );
+}
+
+// Live staff app: the clinic database. Demo mode keeps the in-browser sample data.
+export default function SettingsPage() {
+  return useLiveData() ? <LiveSettings /> : <DemoSettingsPage />;
 }

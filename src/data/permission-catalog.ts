@@ -21,6 +21,7 @@ export const PERMISSION_MODULE_LABELS: Record<PermissionModule, string> = {
   reports: "Reports",
   pharmacy: "Pharmacy",
   lab: "Lab",
+  documents: "Patient documents",
   settings: "Settings",
   online_consultation: "Online Consultation",
 };
@@ -65,6 +66,8 @@ export const PERMISSION_CATALOG: Permission[] = [
   { key: "patient.basic_info.view", name: "View basic patient info", module: "patient", description: "View a patient's name and contact details without full medical history." },
   { key: "assigned_patients.view", name: "View assigned patients", module: "patient", description: "View only patients assigned to you." },
   { key: "assigned_patient.view", name: "View assigned patient", module: "patient", description: "View a patient linked to your lab order." },
+  // Name and description must match migration 20261022000000_patient_link_codes exactly.
+  { key: "patient.portal_link", name: "Issue patient portal linking codes", module: "patient", description: "Issue or revoke a one-time code that links a patient's self-registered portal account to their record, after verifying their identity." },
 
   // Appointments
   { key: "appointment.view", name: "View appointments", module: "appointment", description: "View the appointment schedule." },
@@ -100,6 +103,12 @@ export const PERMISSION_CATALOG: Permission[] = [
   { key: "lab_result.update", name: "Update lab results", module: "lab", description: "Edit lab results." },
   { key: "lab_report.view", name: "View lab reports", module: "lab", description: "View lab reports." },
   { key: "lab_report.upload", name: "Upload lab reports", module: "lab", description: "Upload a completed lab report." },
+
+  // Patient documents (administrative files: ID proof, insurance, consent, other).
+  // Names and descriptions must match migration 20261021000000_patient_documents exactly.
+  { key: "patient_document.upload", name: "Upload patient documents", module: "documents", description: "Upload administrative patient documents such as ID proof, insurance and consent forms." },
+  { key: "patient_document.view", name: "View patient documents", module: "documents", description: "View administrative patient documents." },
+  { key: "patient_document.manage", name: "Manage patient documents", module: "documents", description: "Archive administrative patient documents." },
 
   // Pharmacy
   { key: "pharmacy.manage", name: "Manage pharmacy", module: "pharmacy", description: "Full control over pharmacy operations." },
@@ -166,6 +175,10 @@ export const ROLE_PERMISSION_DEFAULTS: Record<UserRole, string[]> = {
     "reports.view", "reports.export",
     "pharmacy.manage", "lab.manage",
     "medicine.catalog.create", // shared catalogue: Administrator only
+    // P6.2 (migration 20261021000000): documents and lab-report uploads.
+    "patient_document.upload", "patient_document.view", "patient_document.manage", "lab_report.upload",
+    // P6.4 (migration 20261022000000): patient portal linking codes.
+    "patient.portal_link",
   ],
   branch_manager: [
     "branch.view", "branch.update",
@@ -174,6 +187,8 @@ export const ROLE_PERMISSION_DEFAULTS: Record<UserRole, string[]> = {
     "appointment.view", "appointment.create", "appointment.update",
     "billing.view", "reports.view",
     "pharmacy.inventory.view", // view-only stock for their branch (migration 20261017000000)
+    // P6.2: administrative documents only (no clinical files).
+    "patient_document.upload", "patient_document.view", "patient_document.manage",
   ],
   doctor: [
     "profile.view", "profile.update",
@@ -182,6 +197,7 @@ export const ROLE_PERMISSION_DEFAULTS: Record<UserRole, string[]> = {
     "patient.medical_record.view", "patient.medical_record.update",
     "prescription.create", "prescription.update", "prescription.view",
     "lab_report.view",
+    "lab_report.upload", "lab_result.update", // P6.2: own patients only (enforced by the database)
     "medical_notes.create", "medical_notes.update",
     "online_consultation.manage",
   ],
@@ -190,6 +206,7 @@ export const ROLE_PERMISSION_DEFAULTS: Record<UserRole, string[]> = {
     "vitals.create", "vitals.view",
     "appointment.view", "assigned_patients.view",
     "clinical_notes.create", "lab_report.view",
+    "lab_report.upload", "lab_result.update", // P6.2: own branch only (enforced by the database)
   ],
   lab_staff: [
     "lab_order.view", "lab_result.create", "lab_result.update",
@@ -203,6 +220,10 @@ export const ROLE_PERMISSION_DEFAULTS: Record<UserRole, string[]> = {
     "patient.create", "patient.view", "patient.update_basic_info",
     "appointment.create", "appointment.view", "appointment.update", "appointment.cancel",
     "checkin.manage", "billing.view", "payment.create",
+    // P6.2: administrative documents; clinical files upload-only (no read-back).
+    "patient_document.upload", "patient_document.view", "lab_report.upload",
+    // P6.4: patient portal linking codes (after the clinic's identity check).
+    "patient.portal_link",
   ],
   billing_staff: [
     "invoice.create", "invoice.view", "invoice.update",

@@ -37,7 +37,7 @@ export default function SetPasswordPage() {
           updateError.code === "weak_password"
             ? "That password is too weak. Try a longer one."
             : updateError.status === 401 || updateError.code === "session_not_found"
-              ? "Your invitation link has expired. Ask your administrator to send a new one."
+              ? "Your link has expired. Use \"Forgot password?\" on the sign-in page for a new one, or ask your administrator for a new invitation."
               : "Couldn't save your password. Please try again."
         );
         return;

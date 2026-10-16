@@ -16,6 +16,8 @@ import { useAuthStore } from "@/store/auth-store";
 import { isSupabaseAuthEnabled } from "@/lib/auth/config";
 import { safeNextPath } from "@/lib/auth/routes";
 import { signInAction } from "./actions";
+import { ForgotPassword } from "./forgot-password";
+import { VerifyEmailCode } from "../register/verify-email-code";
 
 const REASON_MESSAGES: Record<string, string> = {
   signin: "Please sign in to continue.",
@@ -24,6 +26,10 @@ const REASON_MESSAGES: Record<string, string> = {
   link_invalid: "That sign-in link is invalid or has expired. Ask your administrator for a new invitation.",
   link_unsupported: "That email link uses a format this app doesn't accept, so it couldn't sign you in. Ask your administrator to send a new link (password recovery works for accounts that were already invited).",
   password_set: "Your password has been set. Sign in to continue.",
+  // Email links handled by /auth/callback (sign-up confirmation, password recovery).
+  email_confirmed: "Your email address is confirmed. Sign in to continue.",
+  link_expired: "That email link has expired or was already used. If you've confirmed your email, sign in; otherwise register again to get a new link.",
+  reset_link_invalid: "That password reset link is invalid, expired or already used. Use “Forgot password?” to get a new one.",
 };
 
 const loginSchema = z.object({
@@ -59,6 +65,8 @@ function LoginForm() {
   const hasHydrated = useAuthStore((s) => s.hasHydrated);
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // A correct password for a login whose email isn't confirmed yet: offer the sign-up code instead of a dead end.
+  const [unconfirmedEmail, setUnconfirmedEmail] = useState<string | null>(null);
 
   const {
     register,
@@ -82,15 +90,17 @@ function LoginForm() {
     try {
       // Server Action: signs in server-side (sets the session cookie) and audits the attempt.
       const result = await signInAction({ email, password });
+      if (!result.ok && result.error === "email_not_confirmed") {
+        setUnconfirmedEmail(email.trim().toLowerCase());
+        return;
+      }
       if (!result.ok) {
         setFormError(
           result.error === "invalid_credentials" || result.error === "invalid_input"
             ? "Invalid email or password."
-            : result.error === "email_not_confirmed"
-              ? "Please confirm your email address first — check your inbox for the invitation link."
-              : result.error === "rate_limited"
-                ? "Too many attempts. Please wait a moment and try again."
-                : "Couldn't sign you in right now. Please try again."
+            : result.error === "rate_limited"
+              ? "Too many attempts. Please wait a moment and try again."
+              : "Couldn't sign you in right now. Please try again."
         );
         return;
       }
@@ -163,6 +173,14 @@ function LoginForm() {
             </p>
           )}
 
+          {unconfirmedEmail ? (
+            <VerifyEmailCode
+              email={unconfirmedEmail}
+              notice="Your email address isn't confirmed yet. Enter the verification code we emailed, or send a new one, to"
+              onBack={() => setUnconfirmedEmail(null)}
+              backLabel="Back to sign in"
+            />
+          ) : (
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="email">Email</Label>
@@ -170,7 +188,10 @@ function LoginForm() {
               {errors.email && <p className="text-xs text-danger">{errors.email.message}</p>}
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="password">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                {authEnabled && <ForgotPassword />}
+              </div>
               <div className="relative">
                 <Input
                   id="password"
@@ -200,11 +221,18 @@ function LoginForm() {
               Sign in
             </Button>
           </form>
+          )}
 
           {authEnabled ? (
-            <p className="text-center text-sm text-muted-foreground">
-              Accounts are created by invitation from your clinic administrator.
-            </p>
+            <div className="space-y-1 text-center text-sm text-muted-foreground">
+              <p>
+                New patient?{" "}
+                <Link href="/register" className="font-medium text-primary hover:underline">
+                  Create an account
+                </Link>
+              </p>
+              <p className="text-xs">Staff accounts are created by invitation from your clinic administrator.</p>
+            </div>
           ) : (
             <p className="text-center text-sm text-muted-foreground">
               New patient?{" "}

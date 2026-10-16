@@ -1,5 +1,7 @@
 "use client";
 
+import { useLiveData } from "@/lib/data-source";
+import { LiveSpecialties } from "@/components/clinic-admin/live-specialties";
 import { useState } from "react";
 import { toast } from "sonner";
 import { PlusIcon, StethoscopeIcon } from "lucide-react";
@@ -17,7 +19,7 @@ import { useCurrentClinicId } from "@/hooks/use-current-clinic-id";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useCreateSpecialty, useSetClinicSpecialtyEnabled, useSpecialtiesForClinic } from "@/hooks/use-specialties";
 
-export default function ClinicSpecialtiesPage() {
+function DemoClinicSpecialtiesPage() {
   const clinicId = useCurrentClinicId();
   const user = useCurrentUser();
   const [search, setSearch] = useState("");
@@ -144,4 +146,9 @@ export default function ClinicSpecialtiesPage() {
       </Dialog>
     </div>
   );
+}
+
+// Live staff app: the clinic database. Demo mode keeps the in-browser sample data.
+export default function ClinicSpecialtiesPage() {
+  return useLiveData() ? <LiveSpecialties /> : <DemoClinicSpecialtiesPage />;
 }

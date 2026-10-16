@@ -76,7 +76,3 @@ export async function withUserDb<T>(identity: { authUserId: string; userId: stri
     return fn(tx);
   });
 }
-
-export async function pinUserId(tx: TenantTx, userId: string): Promise<void> {
-  await tx.$executeRaw`SELECT set_config('app.user_id', ${userId}, true)`;
-}

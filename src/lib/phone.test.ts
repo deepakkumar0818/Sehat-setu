@@ -62,6 +62,9 @@ describe("phone numbers (country code + number → E.164)", () => {
 
   it("phoneParts splits a stored number back into the picker's fields (round-trips with phoneFromParts)", () => {
     expect(phoneParts("+919876543210")).toEqual({ country: "IN", otherDial: "", national: "9876543210" });
+    // A number stored as typed (older self-registrations) still loads into the form.
+    expect(phoneParts("+91 98765 43210")).toEqual({ country: "IN", otherDial: "", national: "9876543210" });
+    expect(phoneParts("+91 (98765) 43-210")).toEqual({ country: "IN", otherDial: "", national: "9876543210" });
     expect(phoneParts("+447911123456")).toEqual({ country: "GB", otherDial: "", national: "7911123456" });
     for (const stored of ["+919876543210", "+14155552671", "+971501234567"]) {
       const p = phoneParts(stored);

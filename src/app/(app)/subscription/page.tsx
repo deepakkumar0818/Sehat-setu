@@ -1,5 +1,7 @@
 "use client";
 
+import { useLiveData } from "@/lib/data-source";
+import { LiveSubscription } from "@/components/clinic-admin/live-subscription";
 import { useState } from "react";
 import { toast } from "sonner";
 import { CheckIcon } from "lucide-react";
@@ -15,7 +17,7 @@ import { CURRENT_PLAN_ID, SUBSCRIPTION_INVOICES, SUBSCRIPTION_PLANS } from "@/li
 import { useDataStore } from "@/store/data-store";
 import { cn } from "@/lib/utils";
 
-export default function SubscriptionPage() {
+function DemoSubscriptionPage() {
   const branches = useDataStore((s) => s.db.branches);
   const staffCount = useDataStore((s) => s.db.staff.length + s.db.doctors.length);
   const [planId, setPlanId] = useState(CURRENT_PLAN_ID);
@@ -121,4 +123,9 @@ export default function SubscriptionPage() {
       />
     </div>
   );
+}
+
+// Live staff app: the clinic database. Demo mode keeps the in-browser sample data.
+export default function SubscriptionPage() {
+  return useLiveData() ? <LiveSubscription /> : <DemoSubscriptionPage />;
 }

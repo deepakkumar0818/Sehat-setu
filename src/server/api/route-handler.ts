@@ -1,10 +1,12 @@
 import "server-only";
 import { NextResponse, type NextRequest } from "next/server";
 import { ZodError } from "zod";
-import { requireIdentity, requireStaff } from "@/server/auth/session";
+import { requireIdentity, requirePatient, requireStaff } from "@/server/auth/session";
 import { AuthError, isAuthError } from "@/server/auth/errors";
 import { DataError } from "@/server/api/errors";
-import type { Identity, TenantContext } from "@/server/auth/authorize";
+import { logServerError } from "@/server/log";
+import { reportServerError } from "@/server/monitoring";
+import type { Identity, PatientContext, TenantContext } from "@/server/auth/authorize";
 
 // Every /api/v1 route goes through apiRoute(): it verifies the Supabase
 // session, resolves the clinic/branch-scoped TenantContext, enforces the
@@ -35,6 +37,36 @@ export function apiRoute<P extends RouteParams = RouteParams>(
   };
 }
 
+export interface FileResult {
+  filename: string;
+  contentType: string;
+  body: string | Uint8Array;
+  /** Default "attachment". "inline" only for content that is safe to render (images). */
+  disposition?: "inline" | "attachment";
+}
+
+/** A file response with the headers every download uses (private, no-store, nosniff, sandboxed). */
+function fileResponse(file: FileResult) {
+  const safeName = file.filename.normalize("NFKD").replace(/[^A-Za-z0-9._-]/g, "_");
+  // Non-ASCII names (e.g. Devanagari) also get an RFC 5987 filename*, itself stripped of separators, quotes and control characters.
+  const unicodeName = file.filename.replace(/[\\/"\u0000-\u001f\u007f-\u009f]/g, "_");
+  const extended = /[^\x20-\x7e]/.test(unicodeName) ? `; filename*=UTF-8''${encodeURIComponent(unicodeName)}` : "";
+  const body = typeof file.body === "string" ? new TextEncoder().encode(file.body) : file.body;
+  return new NextResponse(new Blob([body as BlobPart]), {
+    headers: {
+      ...NO_STORE,
+      "Content-Type": file.contentType,
+      "Content-Length": String(body.byteLength),
+      "Content-Disposition": `${file.disposition ?? "attachment"}; filename="${safeName}"${extended}`,
+      "X-Content-Type-Options": "nosniff",
+      // Never let a served file run script or load anything, even if a browser renders it.
+      "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      "Referrer-Policy": "no-referrer",
+    },
+  });
+}
+
 /**
  * Like apiRoute, but the handler returns a file (e.g. a CSV export) that the
  * browser downloads. Same session, permission and error handling: failures are
@@ -42,21 +74,43 @@ export function apiRoute<P extends RouteParams = RouteParams>(
  */
 export function fileRoute<P extends RouteParams = RouteParams>(
   options: { permission: string | readonly string[]; resource: string },
-  handler: (args: { ctx: TenantContext; request: NextRequest; params: P }) => Promise<{ filename: string; contentType: string; body: string }>
+  handler: (args: { ctx: TenantContext; request: NextRequest; params: P }) => Promise<FileResult>
 ) {
   return async (request: NextRequest, context: { params: Promise<P> }) => {
     try {
       const ctx = await requireStaff(options.permission, options.resource);
-      const file = await handler({ ctx, request, params: await context.params });
-      const safeName = file.filename.replace(/[^A-Za-z0-9._-]/g, "_");
-      return new NextResponse(file.body, {
-        headers: {
-          ...NO_STORE,
-          "Content-Type": file.contentType,
-          "Content-Disposition": `attachment; filename="${safeName}"`,
-          "X-Content-Type-Options": "nosniff",
-        },
-      });
+      return fileResponse(await handler({ ctx, request, params: await context.params }));
+    } catch (err) {
+      return toErrorResponse(err, options.resource);
+    }
+  };
+}
+
+type PatientHandler<P extends RouteParams, T> = (args: { ctx: PatientContext; request: NextRequest; params: P }) => Promise<T>;
+
+/**
+ * For /api/v1/portal/* (P6.3): a verified patient-portal session whose patient
+ * record ids come only from the server-side link. Staff memberships never grant
+ * anything here, and the database scopes every read to app.current_patient_ids().
+ */
+export function patientRoute<P extends RouteParams = RouteParams>(options: { resource: string }, handler: PatientHandler<P, unknown>) {
+  return async (request: NextRequest, context: { params: Promise<P> }) => {
+    try {
+      const ctx = await requirePatient(options.resource);
+      const result = await handler({ ctx, request, params: await context.params });
+      return NextResponse.json(result ?? null, { headers: NO_STORE });
+    } catch (err) {
+      return toErrorResponse(err, options.resource);
+    }
+  };
+}
+
+/** patientRoute for a file download (same headers as staff downloads). */
+export function patientFileRoute<P extends RouteParams = RouteParams>(options: { resource: string }, handler: PatientHandler<P, FileResult>) {
+  return async (request: NextRequest, context: { params: Promise<P> }) => {
+    try {
+      const ctx = await requirePatient(options.resource);
+      return fileResponse(await handler({ ctx, request, params: await context.params }));
     } catch (err) {
       return toErrorResponse(err, options.resource);
     }
@@ -99,7 +153,8 @@ function toErrorResponse(err: unknown, resource: string) {
   if (typeof err === "object" && err && "code" in err && (err as { code?: string }).code === "P2002") {
     return errorResponse(409, "CONFLICT", "That record already exists.");
   }
-  console.error(`[api] ${resource}`, err);
+  logServerError(`api ${resource}`, err); // codes only: never row data, messages of database errors or secrets
+  reportServerError(`api ${resource}`, err);
   return errorResponse(500, "INTERNAL", "Something went wrong. Please try again.");
 }
 

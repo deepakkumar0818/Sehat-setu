@@ -17,6 +17,7 @@ import { useAuthStore } from "@/store/auth-store";
 import { isSupabaseAuthEnabled } from "@/lib/auth/config";
 import { useRegisterPatient } from "@/hooks/use-patients";
 import type { Gender } from "@/types";
+import { LiveRegister } from "./live-register";
 
 const registerSchema = z.object({
   name: z.string().min(2, "Enter your full name"),
@@ -36,21 +37,10 @@ const FEATURES = [
 ];
 
 export default function RegisterPage() {
-  // With real authentication, accounts come from clinic invitations; this
-  // self-registration form only ever wrote to the local demo dataset.
-  if (isSupabaseAuthEnabled()) {
-    return (
-      <div className="flex min-h-svh flex-col items-center justify-center gap-4 px-6 text-center">
-        <h1 className="text-xl font-semibold text-foreground">Accounts are created by invitation</h1>
-        <p className="max-w-sm text-sm text-muted-foreground">
-          Ask your clinic to send you an invitation email. Once you&apos;ve set your password you can sign in.
-        </p>
-        <Link href="/login" className="text-sm font-medium text-primary hover:underline">
-          Back to sign in
-        </Link>
-      </div>
-    );
-  }
+  // With real authentication, patients register here (details + emailed OTP)
+  // and /link-account connects or creates their record. The demo form below
+  // only ever wrote to the local demo dataset.
+  if (isSupabaseAuthEnabled()) return <LiveRegister />;
   return <DemoRegisterPage />;
 }
 

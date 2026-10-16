@@ -3,7 +3,7 @@
 import { Client } from "pg";
 import { demoId } from "../../prisma/seed/demo-data";
 import { verifiedPgConfig } from "@/server/db/tls";
-import { resolveTenantContext, type Identity, type RoleKey, type TenantContext } from "@/server/auth/authorize";
+import { resolvePatientContext, resolveTenantContext, type Identity, type PatientContext, type RoleKey, type TenantContext } from "@/server/auth/authorize";
 import { AuthError } from "@/server/auth/errors";
 
 export const FIX = {
@@ -22,7 +22,11 @@ export function adminClient(): Client {
 
 /** Builds a fixture user's identity exactly as the app does (memberships → role permissions). */
 export async function identityFor(admin: Client, userKey: string): Promise<Identity> {
-  const userId = demoId(`user:${userKey}`);
+  return identityForUserId(admin, demoId(`user:${userKey}`), userKey);
+}
+
+/** Like identityFor, for any existing user id (e.g. the clinic's own administrator on a database without demo fixtures). */
+export async function identityForUserId(admin: Client, userId: string, userKey = userId): Promise<Identity> {
   const user = (await admin.query(`SELECT id, email, name FROM users WHERE id = $1`, [userId])).rows[0];
   if (!user) throw new Error(`Fixture user ${userKey} missing — run npm run db:seed`);
   const memberships = (
@@ -42,6 +46,32 @@ export async function identityFor(admin: Client, userKey: string): Promise<Ident
 
 export async function contextFor(admin: Client, userKey: string): Promise<TenantContext> {
   return resolveTenantContext(await identityFor(admin, userKey));
+}
+
+/** The first active administrator's context (works with or without the demo seed). */
+export async function activeAdminContext(admin: Client): Promise<TenantContext> {
+  const row = (
+    await admin.query(
+      `SELECT u.id FROM users u JOIN clinic_memberships m ON m."userId" = u.id AND m.status = 'ACTIVE' AND m."branchId" IS NULL
+       JOIN roles r ON r.id = m."roleId" AND r.key = 'ADMINISTRATOR' JOIN clinics c ON c.id = m."clinicId" AND c.status = 'ACTIVE'
+       ORDER BY u."createdAt", u.id LIMIT 1`
+    )
+  ).rows[0];
+  if (!row) throw new Error("No active clinic administrator in this database");
+  return resolveTenantContext(await identityForUserId(admin, row.id));
+}
+
+/** A fixture patient-portal user's context, built exactly as the app does (membership + server-side record link). */
+export async function patientContextFor(admin: Client, userKey: string): Promise<PatientContext> {
+  const identity = await identityFor(admin, userKey);
+  const links = (await admin.query(`SELECT id AS "patientId", "clinicId" FROM patients WHERE "userId" = $1 AND status = 'ACTIVE'`, [identity.userId])).rows;
+  return resolvePatientContext({ ...identity, patientLinks: links });
+}
+
+/** Pins a patient-portal context on a transaction exactly like withPatientDb (user + clinic only). */
+export async function pinPatient(tx: import("@/server/db/tenant").TenantTx, ctx: PatientContext): Promise<void> {
+  await tx.$executeRaw`SELECT set_config('app.auth_user_id', ${ctx.authUserId}, true), set_config('app.user_id', ${ctx.userId}, true),
+    set_config('app.clinic_id', ${ctx.clinicId}, true), set_config('app.branch_id', '', true)`;
 }
 
 /**

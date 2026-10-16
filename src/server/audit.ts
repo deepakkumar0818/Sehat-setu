@@ -1,6 +1,8 @@
 import "server-only";
 import { headers } from "next/headers";
 import { prisma } from "@/server/prisma";
+import { logServerError } from "@/server/log";
+import { reportEvent } from "@/server/monitoring";
 
 // Security-event logging. Rows are written by the database function
 // app.log_event (SECURITY DEFINER): the runtime role has no INSERT privilege
@@ -12,6 +14,9 @@ export type AuditAction =
   | "auth.sign_in"
   | "auth.sign_out"
   | "auth.account_linked"
+  | "auth.password_reset_requested"
+  | "auth.sign_up_requested"
+  | "auth.sign_up_otp_verified"
   | "access.denied";
 
 export interface AuditEventInput {
@@ -56,6 +61,8 @@ export async function recordAuditEvent(event: AuditEventInput): Promise<void> {
         ${event.metadata ? JSON.stringify(event.metadata) : null}::jsonb)`;
     });
   } catch (err) {
-    console.error("[audit] failed to record event", event.action, err instanceof Error ? err.message : err);
+    // Never the message: a failed insert's error can echo the row (actor email, IP).
+    logServerError(`audit ${event.action}`, err);
+    reportEvent("audit_write_failed", { scope: event.action, error: err });
   }
 }

@@ -7,6 +7,7 @@ import { istDayKey, istDayRange, istMonthStart } from "@/lib/ist";
 import type { TenantTx } from "@/server/db/tenant";
 import type { BillingSummary, InvoiceWithNames } from "@/services/billing";
 import type { Payment } from "@/types";
+import { monthExpenses } from "./expenses";
 import {
   assertPayable,
   BillingRuleError,
@@ -264,19 +265,20 @@ export async function getBillingSummary(ctx: TenantContext, db?: TenantTx, now =
   const monthStart = istMonthStart(now);
   const received = (from: Date) => ({ clinicId: ctx.clinicId, status: "SUCCEEDED" as const, paidAt: { gte: from, lt: today.end }, invoice: invoiceScope });
   return runScoped(ctx, db, async (tx) => {
-    const [todaySum, monthSum, open] = await Promise.all([
+    const [todaySum, monthSum, open, expenses] = await Promise.all([
       tx.payment.aggregate({ where: received(today.start), _sum: { amountPaise: true } }),
       tx.payment.aggregate({ where: received(monthStart), _sum: { amountPaise: true } }),
       tx.invoice.findMany({
         where: { ...invoiceScope, status: { in: ["PENDING", "PARTIALLY_PAID"] } },
         select: { totalPaise: true, payments: { where: { status: "SUCCEEDED" }, select: { amountPaise: true, status: true } } },
       }),
+      monthExpenses(ctx, tx, now),
     ]);
     return {
       todaysRevenue: toRupees(todaySum._sum.amountPaise ?? 0),
       totalRevenueThisMonth: toRupees(monthSum._sum.amountPaise ?? 0),
       outstandingBalance: toRupees(open.reduce((s, inv) => s + Math.max(0, inv.totalPaise - paidPaise(inv.payments)), 0)),
-      totalExpensesThisMonth: null, // no expenses table in the clinic database yet
+      totalExpensesThisMonth: expenses, // null without expense permissions
       canCreateInvoice: hasAnyPermission(ctx, INVOICE_CREATE),
     };
   });

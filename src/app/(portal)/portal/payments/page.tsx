@@ -1,6 +1,8 @@
 "use client";
 
 import { toast } from "sonner";
+import { LivePortalPayments } from "@/components/portal/live-portal-care";
+import { useLiveData } from "@/lib/data-source";
 import { WalletIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/shared/page-header";
@@ -12,7 +14,7 @@ import { formatCurrency, formatDate } from "@/lib/format";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { useInvoices, useRecordPayment } from "@/hooks/use-billing";
 
-export default function PortalPaymentsPage() {
+function DemoPortalPaymentsPage() {
   const user = useCurrentUser();
   const { data, isLoading } = useInvoices({ patientId: user?.patientId, pageSize: 50 });
   const recordPayment = useRecordPayment();
@@ -60,4 +62,9 @@ export default function PortalPaymentsPage() {
       )}
     </div>
   );
+}
+
+export default function PortalPaymentsPage() {
+  // Live (signed-in patient): their own records from the clinic database. Demo mode: the original mock page.
+  return useLiveData() ? <LivePortalPayments /> : <DemoPortalPaymentsPage />;
 }

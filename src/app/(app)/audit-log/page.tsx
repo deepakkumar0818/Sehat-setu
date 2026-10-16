@@ -1,5 +1,7 @@
 "use client";
 
+import { useLiveData } from "@/lib/data-source";
+import { LiveAuditLog } from "@/components/clinic-admin/live-audit-log";
 import { useState } from "react";
 import { ScrollTextIcon } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -17,7 +19,7 @@ import type { UserRole } from "@/types";
 
 const ROLES: UserRole[] = ["clinic_admin", "doctor", "receptionist", "nurse", "pharmacist", "lab_staff"];
 
-export default function AuditLogPage() {
+function DemoAuditLogPage() {
   const branches = useBranches();
   const [search, setSearch] = useState("");
   const [actorRole, setActorRole] = useState<UserRole | "all">("all");
@@ -74,4 +76,9 @@ export default function AuditLogPage() {
       )}
     </div>
   );
+}
+
+// Live staff app: the clinic database. Demo mode keeps the in-browser sample data.
+export default function AuditLogPage() {
+  return useLiveData() ? <LiveAuditLog /> : <DemoAuditLogPage />;
 }

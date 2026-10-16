@@ -463,6 +463,272 @@ async function main() {
       });
     }
 
+    // --- P6.2: lab reports and patient documents (once migration 20261021000000 is applied) ------------
+    // Every row is created through the SECURITY DEFINER entry points as sehat_app, inside one transaction
+    // that inTx rolls back; nothing is committed and no file is stored anywhere.
+    const p62 = (await admin.query(`SELECT to_regclass('public.patient_documents') IS NOT NULL AND to_regclass('public.lab_reports') IS NOT NULL AS ok`)).rows[0].ok;
+    if (!p62) {
+      console.log("P6.2 checks skipped: migration 20261021000000_patient_documents is not applied to this database.");
+    } else {
+      const MANAGER_WAKAD_P62 = demoId("user:ST-02");
+      const NURSE_KOTHRUD_P62 = demoId("user:ST-05");
+      const nurseActive = Boolean((await admin.query(`SELECT 1 FROM clinic_memberships WHERE "userId" = $1 AND status = 'ACTIVE'`, [NURSE_KOTHRUD_P62])).rowCount);
+      const assigned = (await admin.query(`SELECT "patientId" AS id FROM appointments WHERE "doctorId" = $1 ORDER BY "startsAt" LIMIT 1`, [DOCTOR_1])).rows[0]?.id as string;
+      const unassigned = (await admin.query(`SELECT p.id FROM patients p WHERE p."clinicId" = $1 AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a."patientId" = p.id AND a."doctorId" = $2) ORDER BY p."patientNumber" LIMIT 1`, [CLINIC_A, DOCTOR_1])).rows[0]?.id as string;
+      const portalIsDoc1 = Boolean((await admin.query(`SELECT 1 FROM appointments WHERE "patientId" = $1 AND "doctorId" = $2`, [PORTAL_PATIENT, DOCTOR_1])).rowCount);
+      const labPatient = portalIsDoc1 ? PORTAL_PATIENT : assigned;
+      const SHA = "b".repeat(64);
+      const pin = (user: string, clinic: string, branch = "") =>
+        app.query(`SELECT set_config('app.user_id', $1, true), set_config('app.clinic_id', $2, true), set_config('app.branch_id', $3, true)`, [user, clinic, branch]);
+      /** Registers an upload (plain query: the row must survive until inTx rolls back). */
+      const upload = async (patientId: string, category: string, branchId: string | null = null) =>
+        (await app.query(`SELECT document_id FROM app.begin_patient_document_upload($1, $2::"DocumentCategory", 'RLS P62', 'rls-p62.pdf', 'application/pdf', 1234, $3, $4)`,
+          [patientId, category, SHA, branchId])).rows[0].document_id as string;
+      const complete = (id: string) => app.query(`SELECT app.complete_patient_document_upload($1)`, [id]);
+      const visibleDocs = async (ids: string[]) => new Set((await app.query(`SELECT id FROM patient_documents WHERE id = ANY ($1::uuid[])`, [ids])).rows.map((r) => r.id as string));
+
+      await inTx(app, { user_id: ADMIN_A, clinic_id: CLINIC_A }, async () => {
+        // Fixtures: one file per visibility case.
+        await pin(RECEPTION_WAKAD, CLINIC_A, BRANCH_A_WAKAD);
+        const recClinical = await upload(unassigned, "LAB_REPORT"); // clinical, Wakad, unassigned patient
+        const recAdmin = await upload(unassigned, "ID_PROOF"); //       administrative, Wakad
+        await complete(recClinical);
+        await complete(recAdmin);
+        await pin(ADMIN_A, CLINIC_A);
+        const kthAssigned = await upload(assigned, "IMAGING", BRANCH_A_KOTHRUD); //     clinical, Kothrud, DR-01's patient
+        const kthUnassigned = await upload(unassigned, "IMAGING", BRANCH_A_KOTHRUD); // clinical, Kothrud, not DR-01's
+        const kthAdmin = await upload(unassigned, "INSURANCE", BRANCH_A_KOTHRUD); //    administrative, Kothrud
+        for (const id of [kthAssigned, kthUnassigned, kthAdmin]) await complete(id);
+        const uploading = await upload(assigned, "IMAGING", BRANCH_A_KOTHRUD); //       left UPLOADING
+        const failed = await upload(assigned, "IMAGING", BRANCH_A_KOTHRUD);
+        await app.query(`SELECT app.fail_patient_document_upload($1, 'storage_error')`, [failed]);
+        await pin(DOCTOR_1_USER, CLINIC_A);
+        const drWakad = await upload(assigned, "IMAGING", BRANCH_A_WAKAD); //            clinical, Wakad, DR-01's patient
+        await complete(drWakad);
+        const all = [recClinical, recAdmin, kthAssigned, kthUnassigned, kthAdmin, uploading, failed, drWakad];
+        const sees = async (expected: string[]) => {
+          const v = await visibleDocs(all);
+          return { ok: v.size === expected.length && expected.every((id) => v.has(id)), detail: `${v.size} visible, expected ${expected.length}` };
+        };
+
+        // Default deny and clinic isolation.
+        await pin("", CLINIC_A);
+        const noUser = await count(app, `SELECT (SELECT count(*) FROM patient_documents) + (SELECT count(*) FROM lab_reports) n`);
+        await pin(ADMIN_B, CLINIC_A);
+        const forged = await count(app, `SELECT (SELECT count(*) FROM patient_documents) + (SELECT count(*) FROM lab_reports) n`);
+        await pin(ADMIN_B, CLINIC_B);
+        const otherClinic = (await visibleDocs(all)).size;
+        const crossArchive = await attempt(app, `SELECT app.archive_patient_document($1, 'DUPLICATE'::"DocumentArchiveReason", NULL)`, [kthAdmin]);
+        const crossUpload = await attempt(app, `SELECT * FROM app.begin_patient_document_upload($1, 'ID_PROOF'::"DocumentCategory", 'RLS', 'rls.pdf', 'application/pdf', 1, $2)`, [unassigned, SHA]);
+        record("P6.2: no user / forged clinic / other clinic → no documents or lab reports", noUser + forged + otherClinic === 0, `${noUser}/${forged}/${otherClinic}`);
+        record("P6.2: functions refuse another clinic's documents and patients (NOT_FOUND)",
+          /patient document: NOT_FOUND/.test(crossArchive.message) && /patient document: NOT_FOUND/.test(crossUpload.message), `${short(crossArchive.message)}; ${short(crossUpload.message)}`);
+
+        // Role and branch rules, enforced by the RLS policies for the runtime role.
+        await pin(ADMIN_A, CLINIC_A);
+        let r = await sees([recClinical, recAdmin, kthAssigned, kthUnassigned, kthAdmin, drWakad]);
+        record("P6.2: clinic-wide administrator sees every available file in both branches", r.ok, r.detail);
+        await pin(RECEPTION_WAKAD, CLINIC_A, BRANCH_A_WAKAD);
+        r = await sees([recAdmin]);
+        record("P6.2: receptionist sees own-branch administrative files only (clinical upload-only, even their own)", r.ok, r.detail);
+        await pin(MANAGER_WAKAD_P62, CLINIC_A, BRANCH_A_WAKAD);
+        r = await sees([recAdmin]);
+        record("P6.2: clinic manager sees own-branch administrative files only, no clinical", r.ok, r.detail);
+        await pin(DOCTOR_1_USER, CLINIC_A);
+        r = await sees([kthAssigned, drWakad]);
+        record("P6.2: doctor sees own patients' clinical files in both branches; not other patients, not administrative", r.ok, r.detail);
+        if (nurseActive) {
+          await pin(NURSE_KOTHRUD_P62, CLINIC_A, BRANCH_A_KOTHRUD);
+          r = await sees([kthAssigned, kthUnassigned]);
+          record("P6.2: nurse sees own-branch clinical files only; no other branch, no administrative", r.ok, r.detail);
+        } else {
+          console.log("P6.2 nurse check skipped: fixture ST-05 is not active.");
+        }
+        await pin(ADMIN_A, CLINIC_A);
+        const hidden = await count(app, `SELECT count(*) n FROM patient_documents WHERE id IN ($1, $2)`, [uploading, failed]);
+        await pin(DOCTOR_1_USER, CLINIC_A);
+        const hiddenDr = await count(app, `SELECT count(*) n FROM patient_documents WHERE id IN ($1, $2)`, [uploading, failed]);
+        record("P6.2: UPLOADING and FAILED files are never visible (administrator, uploader's assigned doctor)", hidden + hiddenDr === 0, `${hidden}/${hiddenDr}`);
+
+        // No direct writes for the runtime role (even for a clinic-wide administrator).
+        await pin(ADMIN_A, CLINIC_A);
+        const dml = [
+          await attempt(app, `INSERT INTO patient_documents (id) VALUES (gen_random_uuid())`),
+          await attempt(app, `UPDATE patient_documents SET status = 'AVAILABLE' WHERE id = $1`, [uploading]),
+          await attempt(app, `DELETE FROM patient_documents WHERE id = $1`, [kthAdmin]),
+          await attempt(app, `INSERT INTO lab_reports (id) VALUES (gen_random_uuid())`),
+          await attempt(app, `UPDATE lab_reports SET "sharedWithPatientAt" = now()`),
+          await attempt(app, `DELETE FROM lab_reports`),
+        ];
+        record("P6.2: runtime role cannot INSERT, UPDATE or DELETE documents or lab reports directly",
+          dml.every((d) => !d.ok && /permission denied/i.test(d.message)), dml.map((d) => (d.ok ? "ALLOWED" : "denied")).join(","));
+        const internal = await attempt(app, `SELECT app.document_rate_limit()`);
+        record("P6.2: runtime role cannot call internal document helpers", !internal.ok && /permission denied/i.test(internal.message), short(internal.message));
+
+        // Lab reports: receptionist creates (upload-only), assigned doctor reviews and shares.
+        await pin(RECEPTION_WAKAD, CLINIC_A, BRANCH_A_WAKAD);
+        const reportId = (await app.query(`SELECT app.create_lab_report($1, 'RLS test', 'RLS report') id`, [labPatient])).rows[0].id as string;
+        const recReports = await count(app, `SELECT count(*) n FROM lab_reports WHERE id = $1`, [reportId]);
+        const recValues = await attempt(app, `SELECT app.set_lab_report_values($1, '[{"parameter":"x"}]'::jsonb)`, [reportId]);
+        await pin(MANAGER_WAKAD_P62, CLINIC_A, BRANCH_A_WAKAD);
+        const mgrReports = await count(app, `SELECT count(*) n FROM lab_reports WHERE id = $1`, [reportId]);
+        record("P6.2: receptionist creates a lab report but can't read it or enter values; clinic manager can't read it",
+          recReports === 0 && !recValues.ok && mgrReports === 0, `${recReports}/${mgrReports}; ${short(recValues.message)}`);
+        await pin(DOCTOR_1_USER, CLINIC_A);
+        const drReports = await count(app, `SELECT count(*) n FROM lab_reports WHERE id = $1`, [reportId]);
+        await app.query(`SELECT app.set_lab_report_values($1, '[{"parameter":"RLS param","value":"1"}]'::jsonb)`, [reportId]);
+        await app.query(`SELECT app.review_lab_report($1)`, [reportId]);
+        await pin(ADMIN_B, CLINIC_B);
+        const crossReview = await attempt(app, `SELECT app.set_lab_report_shared($1, true)`, [reportId]);
+        record("P6.2: assigned doctor reads and reviews; another clinic can't act on it", drReports === 1 && /lab report: NOT_FOUND/.test(crossReview.message), `${drReports}; ${short(crossReview.message)}`);
+        await pin(PORTAL_USER, CLINIC_A);
+        const portalBefore = await count(app, `SELECT (SELECT count(*) FROM lab_reports) + (SELECT count(*) FROM patient_documents) n`);
+        if (portalIsDoc1) {
+          await pin(DOCTOR_1_USER, CLINIC_A);
+          await app.query(`SELECT app.set_lab_report_shared($1, true)`, [reportId]);
+          await pin(PORTAL_USER, CLINIC_A);
+          const portalAfter = (await app.query(`SELECT id FROM lab_reports`)).rows.map((x) => x.id as string);
+          record("P6.2: patient sees no unshared reports or files; sees their own report only once reviewed and shared",
+            portalBefore === 0 && portalAfter.length === 1 && portalAfter[0] === reportId, `${portalBefore} before, ${portalAfter.length} after sharing`);
+
+          // P6.3 patient portal: of the patient's OWN files, only the shared report's result file is visible.
+          await pin(DOCTOR_1_USER, CLINIC_A);
+          const labFile = (await app.query(`SELECT document_id FROM app.begin_patient_document_upload($1, 'LAB_REPORT'::"DocumentCategory", 'RLS P63', 'rls.pdf', 'application/pdf', 10, $2, NULL, $3)`,
+            [PORTAL_PATIENT, SHA.replace(/^b/, "d"), reportId])).rows[0].document_id as string;
+          await app.query(`SELECT app.complete_patient_document_upload($1)`, [labFile]);
+          await pin(RECEPTION_WAKAD, CLINIC_A, BRANCH_A_WAKAD);
+          const idFile = (await app.query(`SELECT document_id FROM app.begin_patient_document_upload($1, 'ID_PROOF'::"DocumentCategory", 'RLS P63', 'rls.png', 'image/png', 10, $2)`,
+            [PORTAL_PATIENT, SHA.replace(/^b/, "e")])).rows[0].document_id as string;
+          await app.query(`SELECT app.complete_patient_document_upload($1)`, [idFile]);
+          await pin(PORTAL_USER, CLINIC_A);
+          const portalFiles = (await app.query(`SELECT id FROM patient_documents`)).rows.map((x) => x.id as string);
+          record("P6.3: patient sees only the result file of their shared report (not their ID proof)", portalFiles.length === 1 && portalFiles[0] === labFile, `${portalFiles.length} visible`);
+          const portalWrites = [
+            await attempt(app, `INSERT INTO patient_documents (id) VALUES (gen_random_uuid())`),
+            await attempt(app, `UPDATE lab_reports SET "sharedWithPatientAt" = NULL`),
+            await attempt(app, `SELECT app.archive_patient_document($1, 'DUPLICATE'::"DocumentArchiveReason", NULL)`, [labFile]),
+            await attempt(app, `SELECT app.set_lab_report_shared($1, false)`, [reportId]),
+          ];
+          record("P6.3: a patient can't write, archive or change sharing", portalWrites.every((w) => !w.ok), portalWrites.map((w) => short(w.message)).join(" | "));
+          await pin(PORTAL_USER, CLINIC_B);
+          const portalForged = await count(app, `SELECT (SELECT count(*) FROM lab_reports) + (SELECT count(*) FROM patient_documents) n`);
+          await pin(DOCTOR_1_USER, CLINIC_A);
+          await app.query(`SELECT app.set_lab_report_shared($1, false)`, [reportId]);
+          await pin(PORTAL_USER, CLINIC_A);
+          const afterUnshare = await count(app, `SELECT (SELECT count(*) FROM lab_reports) + (SELECT count(*) FROM patient_documents) n`);
+          record("P6.3: unsharing hides the report and its files; a forged clinic context sees nothing", afterUnshare === 0 && portalForged === 0, `${afterUnshare} after unshare, ${portalForged} forged`);
+        } else {
+          record("P6.2: patient sees no unshared lab reports or files", portalBefore === 0, `${portalBefore} visible (shared case not tested: portal patient has no DR-01 appointment)`);
+        }
+      });
+
+      await admin.query("BEGIN");
+      try {
+        await admin.query("SET LOCAL ROLE anon");
+        const anonDocs = await attempt(admin, `SELECT count(*) FROM patient_documents`);
+        await admin.query("SET LOCAL ROLE authenticated");
+        const authdReports = await attempt(admin, `SELECT count(*) FROM lab_reports`);
+        record("P6.2: Data API roles (anon/authenticated) are denied on documents and lab reports", !anonDocs.ok && !authdReports.ok, short(anonDocs.message));
+      } finally {
+        await admin.query("ROLLBACK");
+      }
+
+      // Storage posture (read-only): the bucket is private with the approved limits, storage.objects has RLS and
+      // no policies (only the server's secret key can reach files), and neither the runtime role nor browser roles see objects.
+      const bucket = (await admin.query(`SELECT public, file_size_limit, allowed_mime_types FROM storage.buckets WHERE id = 'patient-documents'`)).rows[0];
+      if (!bucket) {
+        console.log("P6.2 storage checks skipped: the patient-documents bucket doesn't exist yet (prisma/p62-storage-setup.ts).");
+      } else {
+        const mimes = [...(bucket.allowed_mime_types ?? [])].sort().join(",");
+        record("P6.2: bucket is private, 8 MB, PDF/JPEG/PNG only", bucket.public === false && Number(bucket.file_size_limit) === 8388608 && mimes === "application/pdf,image/jpeg,image/png", `public=${bucket.public} limit=${bucket.file_size_limit} types=${mimes}`);
+        const posture = (await admin.query(`SELECT (SELECT relrowsecurity FROM pg_class WHERE oid = 'storage.objects'::regclass) AS rls,
+            (SELECT count(*)::int FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects') AS policies,
+            has_schema_privilege('sehat_app', 'storage', 'USAGE') AS app_usage`)).rows[0];
+        record("P6.2: storage.objects has RLS and no policies; the runtime role has no storage access", posture.rls === true && posture.policies === 0 && posture.app_usage === false, JSON.stringify(posture));
+        const appObjects = await inTx(app, { user_id: ADMIN_A, clinic_id: CLINIC_A }, () => attempt(app, `SELECT count(*) FROM storage.objects`));
+        await admin.query("BEGIN");
+        try {
+          const counts: number[] = [];
+          for (const role of ["anon", "authenticated"]) {
+            await admin.query(`SET LOCAL ROLE ${role}`);
+            const r = await attempt(admin, `SELECT count(*)::int AS n FROM storage.objects WHERE bucket_id = 'patient-documents'`);
+            counts.push(r.ok ? Number((await admin.query(`SELECT count(*)::int AS n FROM storage.objects WHERE bucket_id = 'patient-documents'`)).rows[0].n) : 0);
+          }
+          record("P6.2: runtime and browser roles can't read stored files", !appObjects.ok && counts.every((c) => c === 0), `sehat_app: ${short(appObjects.message)}; anon/authenticated rows: ${counts.join("/")}`);
+        } finally {
+          await admin.query("ROLLBACK");
+        }
+      }
+    }
+
+    // --- P6.4 patient linking codes (all inside rolled-back transactions) -----------------------------
+    const p64Applied = Boolean((await admin.query(`SELECT to_regprocedure('app.redeem_patient_link_code(text, text)') IS NOT NULL AS ok`)).rows[0].ok);
+    if (!p64Applied) {
+      console.log("P6.4 checks skipped: migration 20261022000000_patient_link_codes isn't applied.");
+    } else {
+      const linkPatient = (await admin.query(`SELECT id FROM patients WHERE "clinicId" = $1 AND "userId" IS NULL AND status = 'ACTIVE' ORDER BY "patientNumber" LIMIT 1`, [CLINIC_A])).rows[0]?.id as string;
+      const LOGIN = "rls-p64-unlinked-login";
+      await inTx(app, { user_id: ADMIN_A, clinic_id: CLINIC_A, branch_id: "", auth_user_id: "" }, async () => {
+        const direct = [
+          await attempt(app, `SELECT count(*) FROM patient_link_codes`),
+          await attempt(app, `SELECT count(*) FROM patient_link_attempts`),
+          await attempt(app, `INSERT INTO patient_link_codes (id) VALUES (gen_random_uuid())`),
+          await attempt(app, `UPDATE patient_link_codes SET status = 'ACTIVE'`),
+          await attempt(app, `INSERT INTO patient_link_attempts ("authUserId", succeeded) VALUES ('x', true)`),
+          await attempt(app, `SELECT app.new_patient_link_code()`),
+        ];
+        record("P6.4: runtime role has no direct access to linking codes, attempts or the code generator", direct.every((d) => !d.ok), direct.map((d) => short(d.message)).join(" | "));
+
+        const code = (await app.query(`SELECT code FROM app.issue_patient_link_code($1, true)`, [linkPatient])).rows[0].code as string;
+        const setLogin = (user: string, clinic: string) =>
+          app.query(`SELECT set_config('app.auth_user_id', $1, true), set_config('app.user_id', $2, true), set_config('app.clinic_id', $3, true), set_config('app.branch_id', '', true)`, [LOGIN, user, clinic]);
+        const clinicalCount = () => count(app, `SELECT (SELECT count(*) FROM patients) + (SELECT count(*) FROM appointments) + (SELECT count(*) FROM consultations)
+          + (SELECT count(*) FROM prescriptions) + (SELECT count(*) FROM invoices) + (SELECT count(*) FROM lab_reports) + (SELECT count(*) FROM patient_documents) AS n`);
+        await setLogin("", CLINIC_A);
+        const unlinked = await clinicalCount();
+        const unlinkedIds = await count(app, `SELECT coalesce(array_length(app.current_patient_ids(), 1), 0) AS n`);
+        record("P6.4: a registered but unlinked login sees no patient, clinical or billing rows", unlinked === 0 && unlinkedIds === 0, `${unlinked} rows, ${unlinkedIds} patient ids`);
+
+        const redeemed = (await app.query(`SELECT result FROM app.redeem_patient_link_code($1, 'zztest.rls.p64@example.com')`, [code])).rows[0].result as string;
+        const uid = (await app.query(`SELECT id FROM users WHERE "authProviderId" = $1`, [LOGIN])).rows[0]?.id as string | undefined;
+        await setLogin(uid ?? "", CLINIC_A);
+        const mine = (await app.query(`SELECT id FROM patients`)).rows.map((r) => r.id as string);
+        const ids = (await app.query(`SELECT app.current_patient_ids() AS ids`)).rows[0].ids as string[];
+        record("P6.4: redeeming links exactly the code's patient (RLS then shows that one record)",
+          redeemed === "LINKED" && mine.length === 1 && mine[0] === linkPatient && ids.length === 1 && ids[0] === linkPatient, `${redeemed}, ${mine.length} visible`);
+        const replay = (await app.query(`SELECT result FROM app.redeem_patient_link_code($1, 'zztest.rls.p64@example.com')`, [code])).rows[0].result as string;
+        const patientIssues = await attempt(app, `SELECT * FROM app.issue_patient_link_code($1, true)`, [PORTAL_PATIENT]);
+        const patientStatus = await attempt(app, `SELECT * FROM app.patient_portal_link_status($1)`, [linkPatient]);
+        record("P6.4: the code is single-use; a linked patient can't issue codes or read link status", replay === "ALREADY_LINKED" && !patientIssues.ok && !patientStatus.ok, short(patientIssues.message));
+      });
+
+      for (const [label, ctx, allowed] of [
+        ["administrator", { user_id: ADMIN_A, clinic_id: CLINIC_A, branch_id: "" }, true],
+        ["clinic manager", { user_id: demoId("user:ST-02"), clinic_id: CLINIC_A, branch_id: BRANCH_A_WAKAD }, false],
+        ["doctor", { user_id: DOCTOR_1_USER, clinic_id: CLINIC_A, branch_id: "" }, false],
+        ["other clinic's administrator", { user_id: ADMIN_B, clinic_id: CLINIC_B, branch_id: "" }, false],
+      ] as const) {
+        const r = await inTx(app, { ...ctx, auth_user_id: "" }, () => attempt(app, `SELECT * FROM app.issue_patient_link_code($1, true)`, [linkPatient]));
+        record(`P6.4: ${label} ${allowed ? "can" : "can't"} issue a code for a clinic A patient (database-enforced)`, r.ok === allowed, short(r.message));
+      }
+      const receptionActive = Boolean((await admin.query(`SELECT 1 FROM clinic_memberships WHERE "userId" = $1 AND status = 'ACTIVE'`, [RECEPTION_WAKAD])).rowCount);
+      if (receptionActive) {
+        const r = await inTx(app, { user_id: RECEPTION_WAKAD, clinic_id: CLINIC_A, branch_id: BRANCH_A_WAKAD, auth_user_id: "" }, () => attempt(app, `SELECT * FROM app.issue_patient_link_code($1, true)`, [linkPatient]));
+        record("P6.4: receptionist can issue a code", r.ok, short(r.message));
+      }
+      await admin.query("BEGIN");
+      try {
+        await admin.query("SET LOCAL ROLE anon");
+        const anonCodes = await attempt(admin, `SELECT count(*) FROM patient_link_codes`);
+        const anonRedeem = await attempt(admin, `SELECT * FROM app.redeem_patient_link_code('x', 'a@b.co')`);
+        await admin.query("SET LOCAL ROLE authenticated");
+        const authdAttempts = await attempt(admin, `SELECT count(*) FROM patient_link_attempts`);
+        record("P6.4: Data API roles can't read codes/attempts or call the functions", !anonCodes.ok && !anonRedeem.ok && !authdAttempts.ok, short(anonCodes.message));
+      } finally {
+        await admin.query("ROLLBACK");
+      }
+    }
+
     // --- Supabase Data API roles ----------------------------------------------------------------------
     await admin.query("BEGIN");
     try {

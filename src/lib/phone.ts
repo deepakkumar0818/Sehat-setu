@@ -135,18 +135,23 @@ export function phoneSearchTerms(search: string): string[] {
 /** Splits a stored number back into the picker's fields (for editing). Unknown or non-E.164 values start empty. */
 export function phoneParts(stored: string | null | undefined): { country: string; otherDial: string; national: string } {
   const empty = { country: DEFAULT_PHONE_COUNTRY, otherDial: "", national: "" };
-  if (!stored || !E164.test(stored)) return empty;
-  const digits = stored.slice(1);
+  // Older records may hold the number as typed ("+91 98765 43210"): read it without the spacing.
+  const compact = stored?.replace(/[\s().-]/g, "");
+  if (!compact || !E164.test(compact)) return empty;
+  const digits = compact.slice(1);
   const country = countryForDigits(digits);
-  if (country) return { country: country.iso, otherDial: "", national: digits.slice(country.dial.length) };
-  return empty;
+  if (!country) return empty;
+  const national = digits.slice(country.dial.length);
+  // Only a number that is valid as a whole prefills the form (placeholder seed numbers don't).
+  return phoneFromParts(country.dial, national).ok ? { country: country.iso, otherDial: "", national } : empty;
 }
 
 /** For display: "+919876543210" → "+91 98765 43210". Anything not in E.164 form is shown as stored. */
 export function formatPhone(stored: string | null | undefined): string {
   if (!stored) return "";
-  if (!E164.test(stored)) return stored;
-  const digits = stored.slice(1);
+  const compact = stored.replace(/[\s().-]/g, "");
+  if (!E164.test(compact)) return stored;
+  const digits = compact.slice(1);
   const country = countryForDigits(digits);
   if (!country) return stored;
   const national = digits.slice(country.dial.length);

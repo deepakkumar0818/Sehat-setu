@@ -16,6 +16,7 @@ import { PatientFormDialog } from "@/components/patients/patient-form-dialog";
 import { formatFriendlyDate } from "@/lib/format";
 import { useBranches } from "@/hooks/use-branches";
 import { usePatients } from "@/hooks/use-patients";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useDataStore } from "@/store/data-store";
 import type { Patient, PatientStatus } from "@/types";
 
@@ -36,7 +37,9 @@ export default function PatientsPage() {
   const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(searchParams.get("new") === "1");
 
-  const { data, isLoading } = usePatients({ search, status, branchId, page, pageSize: 10 });
+  // Each request re-verifies the session and runs its own transactions: query once typing pauses, not per keystroke.
+  const debouncedSearch = useDebouncedValue(search.trim());
+  const { data, isLoading } = usePatients({ search: debouncedSearch, status, branchId, page, pageSize: 10 });
 
   const columns: DataTableColumn<Patient>[] = useMemo(
     () => [

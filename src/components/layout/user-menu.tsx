@@ -20,6 +20,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { useAuthStore } from "@/store/auth-store";
 import { isSupabaseAuthEnabled } from "@/lib/auth/config";
 import { useDataStore } from "@/store/data-store";
+import { canResetDemoData } from "@/lib/demo-reset";
 
 export function UserMenu() {
   const router = useRouter();
@@ -29,6 +30,7 @@ export function UserMenu() {
   const [confirmReset, setConfirmReset] = useState(false);
 
   if (!user) return null;
+  const canResetDemo = canResetDemoData(user.role);
 
   const profileHref = user.role === "patient" ? "/portal/profile" : "/settings";
 
@@ -55,9 +57,11 @@ export function UserMenu() {
               <SettingsIcon /> Settings
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem onClick={() => setConfirmReset(true)}>
-            <RotateCcwIcon /> Reset demo data
-          </DropdownMenuItem>
+          {canResetDemo && (
+            <DropdownMenuItem onClick={() => setConfirmReset(true)}>
+              <RotateCcwIcon /> Reset demo data
+            </DropdownMenuItem>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
@@ -78,6 +82,7 @@ export function UserMenu() {
         </DropdownMenuContent>
       </DropdownMenu>
 
+      {canResetDemo && (
       <ConfirmDialog
         open={confirmReset}
         onOpenChange={setConfirmReset}
@@ -90,6 +95,7 @@ export function UserMenu() {
           toast.success("Demo data has been reset.");
         }}
       />
+      )}
     </>
   );
 }

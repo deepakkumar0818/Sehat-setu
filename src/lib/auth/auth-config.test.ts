@@ -59,7 +59,7 @@ describe("route protection map", () => {
   });
 
   it("leaves public pages unprotected", () => {
-    for (const p of ["/", "/login", "/doctors", "/doctors/DR-1", "/book", "/auth/confirm", "/clinics"]) expect(isProtectedPath(p)).toBe(false);
+    for (const p of ["/", "/login", "/doctors", "/doctors/DR-1", "/book", "/auth/confirm", "/auth/callback", "/clinics"]) expect(isProtectedPath(p)).toBe(false);
   });
 });
 

@@ -2,6 +2,8 @@
 // invitations, specialties). Pure types shared by server modules and the
 // browser client — no runtime code, no mock-store imports.
 
+import type { ArchiveReason, DocumentCategoryKey, LabReportStatusKey, LabValue } from "@/lib/documents";
+
 export interface SpecialtyOption {
   id: string;
   name: string;
@@ -209,3 +211,380 @@ export interface FinancialReport {
 }
 
 export type PaymentMethodKey = "cash" | "upi" | "card" | "bank_transfer" | "online";
+
+// --- P6.2: patient documents and lab reports -----------------------------------
+
+
+/** A document row the caller may see (RLS decided). Never carries the storage key or file bytes. */
+export interface LiveDocument {
+  id: string;
+  patientId: string;
+  patientName: string | null;
+  patientNumber: string | null;
+  branch: { id: string; name: string } | null;
+  category: DocumentCategoryKey;
+  clinical: boolean;
+  title: string;
+  filename: string;
+  mimeType: "application/pdf" | "image/jpeg" | "image/png";
+  sizeBytes: number;
+  status: "AVAILABLE" | "ARCHIVED";
+  uploadedAt: string | null;
+  uploadedByName: string | null;
+  labReportId: string | null;
+  consultationId: string | null;
+  archivedAt: string | null;
+  archiveReason: ArchiveReason | null;
+  canArchive: boolean;
+}
+
+export interface DocumentPage {
+  items: LiveDocument[];
+  total: number;
+  page: number;
+  pageSize: number;
+  /** What the caller may upload (the database checks again). */
+  canUploadClinical: boolean;
+  canUploadAdministrative: boolean;
+  /** Whether the caller can read clinical files at all (false = upload-only, e.g. receptionists). */
+  canViewClinical: boolean;
+  storageConfigured: boolean;
+}
+
+/** Returned after an upload. `readable` is false for upload-only callers, who can't open the file afterwards. */
+export interface UploadResult {
+  id: string;
+  category: DocumentCategoryKey;
+  labReportId: string | null;
+  readable: boolean;
+}
+
+export interface LiveLabReport {
+  id: string;
+  patientId: string;
+  patientName: string | null;
+  patientNumber: string | null;
+  branch: { id: string; name: string } | null;
+  testType: string;
+  title: string;
+  status: LabReportStatusKey;
+  resultDate: string | null;
+  orderedBy: { id: string; name: string } | null;
+  consultationId: string | null;
+  reviewedAt: string | null;
+  reviewedByName: string | null;
+  sharedWithPatientAt: string | null;
+  valueCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LabReportPage {
+  items: LiveLabReport[];
+  total: number;
+  page: number;
+  pageSize: number;
+  canCreate: boolean;
+  /** False for upload-only callers: they can add results but never read reports back. */
+  canView: boolean;
+}
+
+export interface LiveLabReportDetail extends LiveLabReport {
+  values: LabValue[];
+  notes: string | null;
+  attachments: LiveDocument[];
+  actions: { canEditValues: boolean; canReview: boolean; canShare: boolean; canAttach: boolean };
+}
+
+// --- P6.3: patient portal (own reviewed, shared lab reports and their files) ------
+
+/** A lab report as the patient sees it: no internal notes, no staff ids. */
+export interface PortalLabReport {
+  id: string;
+  testType: string;
+  title: string;
+  resultDate: string | null;
+  reviewedAt: string | null;
+  sharedAt: string;
+  branchName: string | null;
+  orderedByName: string | null;
+  fileCount: number;
+}
+
+export interface PortalDocument {
+  id: string;
+  labReportId: string;
+  labReportTitle: string | null;
+  title: string;
+  filename: string;
+  mimeType: "application/pdf" | "image/jpeg" | "image/png";
+  sizeBytes: number;
+  uploadedAt: string | null;
+}
+
+export interface PortalLabReportDetail extends PortalLabReport {
+  values: LabValue[];
+  files: PortalDocument[];
+}
+
+/** P6.4: whether a patient has a portal account linked (never which), and their usable code's times (never the code). */
+export interface PortalLinkStatus {
+  linked: boolean;
+  activeCode: { issuedAt: string; expiresAt: string } | null;
+}
+
+/** A newly issued linking code: shown to the staff member once, never retrievable again. */
+export interface PortalLinkCode {
+  code: string;
+  expiresAt: string;
+}
+
+export interface PortalSummary {
+  clinicName: string;
+  patient: { name: string; patientNumber: string } | null;
+  reportCount: number;
+  documentCount: number;
+  latestReports: PortalLabReport[];
+}
+
+// --- Patient portal: own appointments, booking, invoices and dashboard ------------
+
+/** How the portal groups an appointment's status. */
+export type PortalAppointmentStatus = "scheduled" | "confirmed" | "checked_in" | "in_consultation" | "completed" | "cancelled" | "no_show";
+
+/** One of the patient's OWN appointments: no staff notes, no other patients. */
+export interface PortalAppointment {
+  id: string;
+  /** Short human reference (first 8 characters of the id, upper-case). */
+  reference: string;
+  date: string;
+  time: string;
+  startsAt: string;
+  durationMinutes: number;
+  type: "in_person" | "online" | "follow_up" | "walk_in";
+  status: PortalAppointmentStatus;
+  reason: string;
+  doctorId: string;
+  doctorName: string | null;
+  specialty: string | null;
+  branchId: string;
+  branchName: string | null;
+  /** Server-decided: the patient may cancel / reschedule this one now. */
+  canCancel: boolean;
+  canReschedule: boolean;
+}
+
+export type PortalAppointmentScope = "upcoming" | "past" | "cancelled" | "all";
+
+export interface PortalBookingBranch {
+  id: string;
+  name: string;
+  city: string;
+  addressLine: string;
+}
+
+export interface PortalBookingDoctor {
+  id: string;
+  name: string;
+  specialty: string | null;
+  department: string | null;
+  qualifications: string;
+  experienceYears: number;
+  consultationFee: number;
+  /** The doctor's profile offers online (video) consultations. */
+  offersOnline: boolean;
+  branchIds: string[];
+}
+
+export interface PortalBookingOptions {
+  clinicName: string;
+  branches: PortalBookingBranch[];
+  doctors: PortalBookingDoctor[];
+  /** The booking window the server enforces (days ahead). */
+  maxDaysAhead: number;
+}
+
+export interface PortalInvoice {
+  id: string;
+  invoiceNumber: string;
+  issuedAt: string;
+  dueDate: string | null;
+  total: number;
+  paid: number;
+  balance: number;
+  status: "pending" | "partially_paid" | "paid";
+  branchName: string | null;
+  appointmentDate: string | null;
+}
+
+export interface PortalDashboard {
+  clinicName: string;
+  patient: {
+    name: string;
+    patientNumber: string;
+    dateOfBirth: string;
+    gender: "male" | "female" | "other";
+    phone: string;
+    email: string | null;
+    bloodGroup: string | null;
+    branchName: string | null;
+  } | null;
+  upcoming: PortalAppointment[];
+  recent: PortalAppointment[];
+  invoices: { outstandingCount: number; outstandingBalance: number; latest: PortalInvoice[] };
+  reportCount: number;
+  documentCount: number;
+}
+
+/** The clinic record as staff entered it (read-only for the patient). */
+export interface PortalClinicRecord {
+  name: string;
+  patientNumber: string;
+  dateOfBirth: string;
+  gender: "male" | "female" | "other";
+  phone: string;
+  email: string | null;
+  bloodGroup: string | null;
+  addressLine: string | null;
+  city: string | null;
+  allergies: string[];
+  chronicConditions: string[];
+  emergencyContactName: string | null;
+  emergencyContactPhone: string | null;
+  branchName: string | null;
+}
+
+// --- Clinic setup (branches, departments, specialties, clinic profile) -------
+
+/** Branch fields staff can set (live). The code is generated from the name when left empty. */
+export interface BranchInput {
+  name: string;
+  code?: string;
+  city: string;
+  address: string;
+  phone: string;
+  email?: string;
+}
+
+export interface LiveDepartment {
+  id: string;
+  name: string;
+  description: string | null;
+  /** null: clinic-wide. */
+  branchId: string | null;
+  branchName: string | null;
+  specialtyId: string | null;
+  specialtyName: string | null;
+  status: "active" | "inactive";
+  doctorCount: number;
+}
+
+export interface DepartmentPage {
+  items: LiveDepartment[];
+  canManage: boolean;
+}
+
+export interface DepartmentInput {
+  name: string;
+  description?: string | null;
+  branchId?: string | null;
+  specialtyId?: string | null;
+}
+
+/** The shared specialty catalogue with this clinic's usage. */
+export interface LiveSpecialty {
+  id: string;
+  name: string;
+  description: string | null;
+  doctorCount: number;
+  departmentCount: number;
+}
+
+export interface ClinicProfile {
+  id: string;
+  code: string;
+  name: string;
+  email: string;
+  phone: string;
+  addressLine: string;
+  city: string;
+  state: string;
+  pincode: string;
+  currency: string;
+  status: "active" | "suspended" | "pending";
+  canEdit: boolean;
+  /** What the signed-in user may do on the clinic-admin screens (UI hints; the server re-checks). */
+  can: { createBranch: boolean; updateBranch: boolean; manageDepartments: boolean };
+  usage: { branches: number; activeBranches: number; staff: number; doctors: number; patients: number };
+}
+
+export type ClinicProfileInput = Pick<ClinicProfile, "name" | "email" | "phone" | "addressLine" | "city" | "state" | "pincode">;
+
+// --- Audit log -----------------------------------------------------------------
+
+export interface AuditEntry {
+  id: string;
+  occurredAt: string;
+  /** Who: a staff member's name, a system label, or "Former user". */
+  actorName: string;
+  /** Human summary, e.g. "Updated a branch". */
+  summary: string;
+  /** Raw action key, e.g. "branches.update". */
+  action: string;
+  area: AuditArea;
+  outcome: "success" | "denied" | "failure";
+  /** Column names that changed (never values). */
+  changed: string[];
+  reason: string | null;
+}
+
+export type AuditArea = "sign_in" | "access" | "patients" | "appointments" | "clinical" | "billing" | "inventory" | "staff" | "setup" | "other";
+
+export interface AuditPage {
+  items: AuditEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+// --- Expenses ------------------------------------------------------------------
+
+export type LiveExpenseCategory = "rent" | "salary" | "utilities" | "equipment" | "medicine_purchase" | "lab_expense" | "marketing" | "maintenance" | "other";
+
+export interface LiveExpense {
+  id: string;
+  branchId: string;
+  branchName: string;
+  category: LiveExpenseCategory;
+  description: string;
+  /** Rupees. */
+  amount: number;
+  date: string;
+  paidTo: string | null;
+  reference: string | null;
+  status: "recorded" | "voided";
+  voidReason: string | null;
+  recordedBy: string;
+  createdAt: string;
+}
+
+export interface ExpensePage {
+  items: LiveExpense[];
+  total: number;
+  page: number;
+  pageSize: number;
+  /** Rupees: recorded (not voided) expenses in the current IST month, in the user's branch scope. */
+  monthTotal: number;
+  canManage: boolean;
+}
+
+export interface ExpenseInput {
+  branchId: string;
+  category: LiveExpenseCategory;
+  description: string;
+  /** Rupees (up to 2 decimals). */
+  amount: number;
+  date: string;
+  paidTo?: string;
+  reference?: string;
+}

@@ -1,6 +1,6 @@
 import "server-only";
-import { withTenantDb, type TenantTx } from "@/server/db/tenant";
-import type { TenantContext } from "@/server/auth/authorize";
+import { withPatientDb, withTenantDb, type TenantTx } from "@/server/db/tenant";
+import type { PatientContext, TenantContext } from "@/server/auth/authorize";
 
 /**
  * Runs `fn` with RLS scoped to `ctx`. Callers normally omit `db`, giving each
@@ -10,6 +10,16 @@ import type { TenantContext } from "@/server/auth/authorize";
  */
 export function runScoped<T>(ctx: TenantContext, db: TenantTx | undefined, fn: (tx: TenantTx) => Promise<T>): Promise<T> {
   return db ? fn(db) : withTenantDb(ctx, fn);
+}
+
+/**
+ * Runs `fn` with RLS scoped to a verified patient-portal context (P6.3): only
+ * the user and clinic are pinned, and the database derives the patient records
+ * from the server-side link (app.current_patient_ids()). `db` composes into an
+ * existing transaction with the same context pinned (tests).
+ */
+export function runPatientScoped<T>(ctx: PatientContext, db: TenantTx | undefined, fn: (tx: TenantTx) => Promise<T>): Promise<T> {
+  return db ? fn(db) : withPatientDb(ctx, fn);
 }
 
 export interface Page<T> {

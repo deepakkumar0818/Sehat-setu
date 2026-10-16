@@ -20,12 +20,13 @@ import {
 // Live (authenticated staff app): clinic database API. Otherwise: mock services.
 const src = (live: boolean) => (live ? "live" : "mock");
 
-export function useAppointments(params: ListAppointmentsParams) {
+export function useAppointments(params: ListAppointmentsParams, options: { enabled?: boolean } = {}) {
   const live = useLiveData();
   return useQuery({
     queryKey: [...queryKeys.appointments.list(params), src(live)],
     queryFn: () => (live ? liveApi.appointments.list(params) : listAppointments(params)),
     placeholderData: (prev) => prev,
+    enabled: options.enabled ?? true,
   });
 }
 

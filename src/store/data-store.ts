@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { CURRENT_SEED_VERSION, generateDatabase } from "@/data/seed";
 import type { SehatSetuDatabase } from "@/types";
+import { isSupabaseAuthEnabled } from "@/lib/auth/config";
 
 // SSR-safe storage: Next.js pre-renders client components on the server,
 // where `localStorage` does not exist.
@@ -30,7 +31,11 @@ export const useDataStore = create<DataStoreState>()(
       hasHydrated: false,
       setHasHydrated: (value) => set({ hasHydrated: value }),
       setDb: (updater) => set((state) => ({ db: updater(state.db) })),
-      resetDemoData: () => set({ db: generateDatabase(Date.now()) }),
+      // Demo mode only: with real sign-in (Supabase Auth) there is no browser dataset to reset.
+      resetDemoData: () => {
+        if (isSupabaseAuthEnabled()) return;
+        set({ db: generateDatabase(Date.now()) });
+      },
     }),
     {
       name: "sehat-setu-db",

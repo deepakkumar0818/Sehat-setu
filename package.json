@@ -21,7 +21,9 @@
     "db:p5-dry-run": "tsx prisma/p5-dry-run.ts",
     "db:p5-phone-dry-run": "tsx prisma/p5-phone-dry-run.ts",
     "db:p5-phone-edit-dry-run": "tsx prisma/p5-phone-edit-dry-run.ts",
-    "db:purge-notifications": "tsx prisma/purge-notifications.ts"
+    "db:purge-notifications": "tsx prisma/purge-notifications.ts",
+    "db:storage-consistency": "tsx prisma/storage-consistency.ts",
+    "storage:backup": "tsx prisma/file-backup.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
@@ -37,7 +39,7 @@
     "framer-motion": "^13.2.0",
     "input-otp": "^1.5.0",
     "lucide-react": "^1.41.0",
-    "next": "16.3.4",
+    "next": "16.4.0",
     "next-themes": "^0.4.6",
     "pg": "8.23.1",
     "radix-ui": "^1.6.7",
@@ -55,13 +57,13 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^22.20.5",
     "@types/pg": "8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "dotenv": "17.4.2",
     "eslint": "^9",
-    "eslint-config-next": "16.3.4",
+    "eslint-config-next": "16.4.0",
     "jsdom": "^29.1.1",
     "prisma": "7.10.0",
     "shadcn": "^4.21.0",

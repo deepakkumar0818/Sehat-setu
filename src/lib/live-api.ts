@@ -6,6 +6,7 @@ import type { PagedResult } from "@/lib/async";
 import type { AppointmentWithNames, CreateAppointmentInput, ListAppointmentsParams } from "@/services/appointments";
 import type { BillingSummary, CreateManualInvoiceInput, InvoiceWithNames, ListInvoicesParams, ListPaymentsParams } from "@/services/billing";
 import type { CreatePatientInput, ListPatientsParams } from "@/services/patients";
+import type { PatientReportedView } from "@/lib/patient-intake";
 import type { ListStockParams, LiveInventorySummary, ReceiveStockInput, StockDetail, StockRow } from "@/services/inventory";
 import type {
   CatalogMedicine,
@@ -31,9 +32,48 @@ import type {
   UnreadCount,
   FinancialReport,
   OperationalReport,
+  DocumentPage,
+  LabReportPage,
+  LiveDocument,
+  LiveLabReportDetail,
+  UploadResult,
+  PortalDocument,
+  PortalLabReport,
+  PortalLabReportDetail,
+  PortalSummary,
+  PortalAppointment,
+  PortalAppointmentScope,
+  PortalBookingOptions,
+  PortalClinicRecord,
+  PortalDashboard,
+  PortalInvoice,
+  PortalLinkCode,
+  PortalLinkStatus,
+  AuditPage,
+  AuditArea,
+  BranchInput,
+  ClinicProfile,
+  ClinicProfileInput,
+  DepartmentInput,
+  DepartmentPage,
+  ExpenseInput,
+  ExpensePage,
+  LiveDepartment,
+  LiveExpense,
+  LiveExpenseCategory,
+  LiveSpecialty,
 } from "@/lib/live-types";
+
+import type { ArchiveReason, DocumentCategoryKey, LabValue } from "@/lib/documents";
 import type { ReportExportKey } from "@/lib/reports";
 import type { Branch, Consultation, Doctor, Patient, Payment, PatientStatus, PaymentMethod, StaffMember, TimelineEvent } from "@/types";
+
+export interface PortalPage<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
 
 const CONSULTATION_EDITABLE = [
   "chiefComplaint", "symptoms", "history", "allergiesNoted", "vitals", "examination", "diagnosis", "clinicalNotes", "treatmentPlan", "labTestsOrdered",
@@ -85,7 +125,195 @@ async function downloadReport(report: ReportExportKey, params: ReportParams): Pr
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// --- P6.2: patient documents and lab reports -------------------------------------
+
+export interface ListDocumentsParams {
+  kind?: "all" | "clinical" | "administrative";
+  category?: DocumentCategoryKey | "all";
+  status?: "available" | "archived" | "all";
+  search?: string;
+  labReportId?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface UploadDocumentInput {
+  patientId: string;
+  file: File;
+  category: DocumentCategoryKey;
+  title: string;
+  labReportId?: string;
+  consultationId?: string;
+  /** LAB_REPORT without labReportId: also registers a lab report for this file. */
+  testType?: string;
+}
+
+/** Multipart upload with real progress (XHR). Errors are thrown as ApiRequestError, never swallowed. */
+function uploadDocument(input: UploadDocumentInput, onProgress?: (fraction: number) => void): Promise<UploadResult> {
+  const form = new FormData();
+  form.set("file", input.file);
+  form.set("category", input.category);
+  form.set("title", input.title);
+  if (input.labReportId) form.set("labReportId", input.labReportId);
+  if (input.consultationId) form.set("consultationId", input.consultationId);
+  if (input.testType) form.set("testType", input.testType);
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/v1/patients/${encodeURIComponent(input.patientId)}/documents`);
+    xhr.withCredentials = true;
+    xhr.responseType = "json";
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded / e.total);
+    };
+    xhr.onerror = () => reject(new ApiRequestError(0, "NETWORK", "Couldn't reach the server. Check your connection and try again."));
+    xhr.onload = () => {
+      const json = xhr.response as { error?: { code?: string; message?: string; details?: unknown } } | UploadResult | null;
+      if (xhr.status >= 200 && xhr.status < 300) return resolve(json as UploadResult);
+      const err = (json as { error?: { code?: string; message?: string; details?: unknown } } | null)?.error;
+      reject(new ApiRequestError(xhr.status, err?.code ?? `HTTP_${xhr.status}`, err?.message ?? "The upload failed. Please try again.", err?.details));
+    };
+    xhr.send(form);
+  });
+}
+
+/** Fetches a document's bytes through the authorized, audited server route. */
+async function fetchDocumentBlob(id: string, disposition: "inline" | "attachment"): Promise<{ blob: Blob; filename: string }> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1/documents/${encodeURIComponent(id)}/file?disposition=${disposition}`, { credentials: "same-origin", cache: "no-store" });
+  } catch {
+    throw new ApiRequestError(0, "NETWORK", "Couldn't reach the server. Check your connection and try again.");
+  }
+  if (!res.ok) {
+    const json = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
+    throw new ApiRequestError(res.status, json?.error?.code ?? `HTTP_${res.status}`, json?.error?.message ?? "The file couldn't be opened.");
+  }
+  const cd = res.headers.get("content-disposition") ?? "";
+  const star = /filename\*=UTF-8''([^;]+)/.exec(cd)?.[1];
+  const filename = star ? decodeURIComponent(star) : (/filename="([^"]+)"/.exec(cd)?.[1] ?? "document");
+  return { blob: await res.blob(), filename };
+}
+
+async function downloadDocument(id: string): Promise<void> {
+  const { blob, filename } = await fetchDocumentBlob(id, "attachment");
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** An image for in-page preview (object URL; the caller revokes it). */
+async function previewDocument(id: string): Promise<string> {
+  const { blob } = await fetchDocumentBlob(id, "inline");
+  return URL.createObjectURL(blob);
+}
+
+export interface ListLabReportsParams {
+  patientId?: string;
+  status?: "PENDING" | "AVAILABLE" | "REVIEWED" | "all";
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface CreateLabReportInput {
+  patientId: string;
+  testType: string;
+  title: string;
+  consultationId?: string;
+}
+
+export interface SetLabValuesInput {
+  values: LabValue[];
+  resultDate?: string | null;
+  notes?: string | null;
+}
+
+// --- P6.3: patient portal ----------------------------------------------------------
+
+/** A file of the patient's own shared report, through the authorized, audited portal route. */
+async function fetchPortalFile(id: string, disposition: "inline" | "attachment"): Promise<{ blob: Blob; filename: string }> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1/portal/documents/${encodeURIComponent(id)}/file?disposition=${disposition}`, { credentials: "same-origin", cache: "no-store" });
+  } catch {
+    throw new ApiRequestError(0, "NETWORK", "Couldn't reach the server. Check your connection and try again.");
+  }
+  if (!res.ok) {
+    const json = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
+    throw new ApiRequestError(res.status, json?.error?.code ?? `HTTP_${res.status}`, json?.error?.message ?? "The file couldn't be opened.");
+  }
+  const cd = res.headers.get("content-disposition") ?? "";
+  const star = /filename\*=UTF-8''([^;]+)/.exec(cd)?.[1];
+  const filename = star ? decodeURIComponent(star) : (/filename="([^"]+)"/.exec(cd)?.[1] ?? "document");
+  return { blob: await res.blob(), filename };
+}
+
+async function downloadPortalFile(id: string): Promise<void> {
+  const { blob, filename } = await fetchPortalFile(id, "attachment");
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** What the booking form sends: never a patient or clinic id. */
+export interface PortalBookingRequest {
+  branchId: string;
+  doctorId: string;
+  date: string;
+  time: string;
+  reason: string;
+  type: "in_person" | "online";
+  symptoms?: { requestId: string; symptoms: string; onset: string; severity?: string | null } | null;
+}
+
 export const liveApi = {
+  portal: {
+    summary: () => apiGet<PortalSummary>("/api/v1/portal/summary"),
+    labReports: (params: { page?: number; pageSize?: number } = {}) => apiGet<PortalPage<PortalLabReport>>("/api/v1/portal/lab-reports", params),
+    labReport: (id: string) => apiGet<PortalLabReportDetail>(`/api/v1/portal/lab-reports/${encodeURIComponent(id)}`),
+    documents: (params: { page?: number; pageSize?: number } = {}) => apiGet<PortalPage<PortalDocument>>("/api/v1/portal/documents", params),
+    download: downloadPortalFile,
+    preview: async (id: string) => URL.createObjectURL((await fetchPortalFile(id, "inline")).blob),
+    // Own appointments, booking, invoices and record (no patient id is ever sent).
+    dashboard: () => apiGet<PortalDashboard>("/api/v1/portal/dashboard"),
+    appointments: (params: { scope?: PortalAppointmentScope; page?: number; pageSize?: number } = {}) => apiGet<PortalPage<PortalAppointment>>("/api/v1/portal/appointments", params),
+    appointment: (id: string) => apiGet<PortalAppointment>(`/api/v1/portal/appointments/${encodeURIComponent(id)}`),
+    bookingOptions: () => apiGet<PortalBookingOptions>("/api/v1/portal/booking-options"),
+    slots: (params: { doctorId: string; branchId: string; date: string }) => apiGet<{ date: string; slots: string[] }>("/api/v1/portal/slots", params),
+    book: (input: PortalBookingRequest) => apiPost<PortalAppointment>("/api/v1/portal/appointments", input),
+    cancel: (id: string) => apiPost<PortalAppointment>(`/api/v1/portal/appointments/${encodeURIComponent(id)}/cancel`),
+    reschedule: (id: string, input: { date: string; time: string }) => apiPost<PortalAppointment>(`/api/v1/portal/appointments/${encodeURIComponent(id)}/reschedule`, input),
+    invoices: (params: { page?: number; pageSize?: number } = {}) => apiGet<PortalPage<PortalInvoice>>("/api/v1/portal/invoices", params),
+    record: () => apiGet<PortalClinicRecord>("/api/v1/portal/record"),
+  },
+  documents: {
+    list: (params: ListDocumentsParams) => apiGet<DocumentPage>("/api/v1/documents", params),
+    listForPatient: (patientId: string, params: ListDocumentsParams = {}) => apiGet<DocumentPage>(`/api/v1/patients/${encodeURIComponent(patientId)}/documents`, params),
+    get: (id: string) => apiGet<LiveDocument>(`/api/v1/documents/${encodeURIComponent(id)}`),
+    upload: uploadDocument,
+    archive: (id: string, input: { reason: ArchiveReason; note?: string }) => apiPost<LiveDocument>(`/api/v1/documents/${encodeURIComponent(id)}/archive`, input),
+    download: downloadDocument,
+    preview: previewDocument,
+  },
+  labReports: {
+    list: (params: ListLabReportsParams) => apiGet<LabReportPage>("/api/v1/lab-reports", params),
+    get: (id: string) => apiGet<LiveLabReportDetail>(`/api/v1/lab-reports/${encodeURIComponent(id)}`),
+    create: (input: CreateLabReportInput) => apiPost<{ id: string; readable: boolean }>("/api/v1/lab-reports", input),
+    setValues: (id: string, input: SetLabValuesInput) => apiPatch<LiveLabReportDetail>(`/api/v1/lab-reports/${encodeURIComponent(id)}`, input),
+    review: (id: string) => apiPost<LiveLabReportDetail>(`/api/v1/lab-reports/${encodeURIComponent(id)}/review`),
+    share: (id: string) => apiPost<LiveLabReportDetail>(`/api/v1/lab-reports/${encodeURIComponent(id)}/share`),
+    unshare: (id: string) => apiPost<LiveLabReportDetail>(`/api/v1/lab-reports/${encodeURIComponent(id)}/unshare`),
+  },
   reports: {
     operational: (params: ReportParams) => apiGet<OperationalReport>("/api/v1/reports/operational", params),
     financial: (params: ReportParams) => apiGet<FinancialReport>("/api/v1/reports/financial", params),
@@ -93,6 +321,27 @@ export const liveApi = {
   },
   branches: {
     list: () => apiGet<Branch[]>("/api/v1/branches"),
+    create: (input: BranchInput) => apiPost<Branch>("/api/v1/branches", input),
+    update: (id: string, patch: Partial<Omit<BranchInput, "code">>) => apiPatch<Branch>(`/api/v1/branches/${encodeURIComponent(id)}`, patch),
+    setStatus: (id: string, status: Branch["status"]) => apiPatch<Branch>(`/api/v1/branches/${encodeURIComponent(id)}`, { status }),
+  },
+  departments: {
+    list: () => apiGet<DepartmentPage>("/api/v1/departments"),
+    create: (input: DepartmentInput) => apiPost<LiveDepartment>("/api/v1/departments", input),
+    update: (id: string, patch: Partial<Omit<DepartmentInput, "branchId">>) => apiPatch<LiveDepartment>(`/api/v1/departments/${encodeURIComponent(id)}`, patch),
+    setStatus: (id: string, status: LiveDepartment["status"]) => apiPatch<LiveDepartment>(`/api/v1/departments/${encodeURIComponent(id)}`, { status }),
+  },
+  clinic: {
+    get: () => apiGet<ClinicProfile>("/api/v1/clinic"),
+    update: (patch: Partial<ClinicProfileInput>) => apiPatch<ClinicProfile>("/api/v1/clinic", patch),
+  },
+  auditEvents: (params: { area?: AuditArea; outcome?: "success" | "denied" | "failure"; search?: string; page?: number; pageSize?: number }) =>
+    apiGet<AuditPage>("/api/v1/audit-events", params),
+  expenses: {
+    list: (params: { search?: string; category?: LiveExpenseCategory; branchId?: string; status?: "recorded" | "voided" | "all"; page?: number; pageSize?: number }) =>
+      apiGet<ExpensePage>("/api/v1/expenses", params),
+    create: (input: ExpenseInput) => apiPost<LiveExpense>("/api/v1/expenses", input),
+    void: (id: string, reason: string) => apiPost<LiveExpense>(`/api/v1/expenses/${encodeURIComponent(id)}/void`, { reason }),
   },
   patients: {
     list: (params: ListPatientsParams) => apiGet<PagedResult<Patient>>("/api/v1/patients", params),
@@ -105,6 +354,12 @@ export const liveApi = {
       ),
     setStatus: (id: string, status: PatientStatus) => apiPatch<Patient>(`/api/v1/patients/${encodeURIComponent(id)}`, { status }),
     timeline: (id: string) => apiGet<TimelineEvent[]>(`/api/v1/patients/${encodeURIComponent(id)}/timeline`),
+    // P6.4 patient portal linking codes (patient.portal_link).
+    portalLink: (id: string) => apiGet<PortalLinkStatus>(`/api/v1/patients/${encodeURIComponent(id)}/portal-link`),
+    issuePortalLinkCode: (id: string) => apiPost<PortalLinkCode>(`/api/v1/patients/${encodeURIComponent(id)}/portal-link`, { identityVerified: true }),
+    revokePortalLinkCode: (id: string) => apiPost<{ revoked: boolean }>(`/api/v1/patients/${encodeURIComponent(id)}/portal-link/revoke`, {}),
+    // P6.5 patient-reported onboarding answers (medical-record permission; read-only).
+    patientReported: (id: string) => apiGet<PatientReportedView>(`/api/v1/patients/${encodeURIComponent(id)}/patient-reported`),
   },
   consultations: {
     list: (params: ListConsultationsParams) => apiGet<PagedResult<ConsultationWithNames>>("/api/v1/consultations", params),
@@ -162,6 +417,7 @@ export const liveApi = {
   },
   specialties: {
     list: () => apiGet<{ items: SpecialtyOption[] }>("/api/v1/specialties"),
+    usage: () => apiGet<{ items: LiveSpecialty[] }>("/api/v1/specialties/usage"),
   },
   staff: {
     list: (params: ListStaffParams) => apiGet<PagedResult<StaffMember> & { capabilities: StaffCapabilities }>("/api/v1/staff", params),

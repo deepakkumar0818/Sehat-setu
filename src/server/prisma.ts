@@ -17,7 +17,16 @@ function createPrismaClient(): PrismaClient {
   if (!connectionString) {
     throw new Error("DATABASE_URL is not set. Add it to .env.local (see .env.example).");
   }
-  return new PrismaClient({ adapter: new PrismaPg(verifiedPgConfig(connectionString)) });
+  // Every query runs in an interactive transaction (src/server/db/tenant.ts).
+  // Prisma's default maxWait (2s) covers acquiring a pooled connection AND
+  // BEGIN; a fresh TLS connection to the remote pooler alone takes ~0.5–0.8s,
+  // so a page firing several transactions on a cold or busy pool exceeded it
+  // ("Unable to start a transaction in the given time"). connectionTimeoutMillis
+  // still fails fast if the database is actually unreachable.
+  return new PrismaClient({
+    adapter: new PrismaPg({ ...verifiedPgConfig(connectionString), max: 20, connectionTimeoutMillis: 10_000 }),
+    transactionOptions: { maxWait: 10_000, timeout: 15_000 },
+  });
 }
 
 // Next.js dev hot-reloads modules; cache the client on globalThis so each

@@ -16,14 +16,15 @@ import { BillingTab } from "@/components/patients/tabs/billing-tab";
 import { AppointmentsTab } from "@/components/patients/tabs/appointments-tab";
 import { usePatient } from "@/hooks/use-patients";
 import { useLiveData } from "@/lib/data-source";
-import { NotConnected } from "@/components/shared/not-connected";
+import { LivePatientDocuments } from "@/components/documents/live-documents";
+import { LivePatientLabReports } from "@/components/lab-reports/live-lab-reports";
+import { PortalLinkCard } from "@/components/patients/portal-link-card";
+import { PatientReportedCard } from "@/components/patients/patient-reported-card";
 
 export default function PatientProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: patient, isLoading, isError, refetch } = usePatient(id);
   const live = useLiveData();
-  // Live data: tabs whose modules aren't on the database yet say so, rather than showing empty or demo data.
-  const later = (feature: string, tab: React.ReactNode) => (live ? <NotConnected feature={feature} /> : tab);
 
   if (isLoading) {
     return (
@@ -41,6 +42,8 @@ export default function PatientProfilePage({ params }: { params: Promise<{ id: s
   return (
     <div className="space-y-5">
       <PatientHeader patient={patient} />
+      {live && <PortalLinkCard patientId={patient.id} />}
+      {live && <PatientReportedCard patientId={patient.id} />}
 
       <Tabs defaultValue="overview">
         <TabsList className="flex w-full flex-wrap justify-start gap-1 sm:w-auto">
@@ -59,9 +62,9 @@ export default function PatientProfilePage({ params }: { params: Promise<{ id: s
           <TabsContent value="timeline" id="timeline"><TimelineTab patientId={patient.id} /></TabsContent>
           <TabsContent value="consultations"><ConsultationsTab patientId={patient.id} /></TabsContent>
           <TabsContent value="prescriptions"><PrescriptionsTab patientId={patient.id} /></TabsContent>
-          <TabsContent value="reports">{later("Lab reports", <ReportsTab patientId={patient.id} />)}</TabsContent>
+          <TabsContent value="reports">{live ? <LivePatientLabReports patientId={patient.id} /> : <ReportsTab patientId={patient.id} />}</TabsContent>
           <TabsContent value="medicines"><MedicinesTab patientId={patient.id} /></TabsContent>
-          <TabsContent value="documents">{later("Documents", <DocumentsTab patientId={patient.id} />)}</TabsContent>
+          <TabsContent value="documents">{live ? <LivePatientDocuments patientId={patient.id} /> : <DocumentsTab patientId={patient.id} />}</TabsContent>
           <TabsContent value="billing"><BillingTab patientId={patient.id} /></TabsContent>
           <TabsContent value="appointments"><AppointmentsTab patientId={patient.id} /></TabsContent>
         </div>

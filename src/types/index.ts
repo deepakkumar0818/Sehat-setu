@@ -146,6 +146,7 @@ export type PermissionModule =
   | "reports"
   | "pharmacy"
   | "lab"
+  | "documents"
   | "settings"
   | "online_consultation";
 

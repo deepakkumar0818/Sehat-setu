@@ -6,7 +6,8 @@ import { createSupabaseServerClient } from "@/server/supabase";
 const ALLOWED_TYPES: EmailOtpType[] = ["invite", "recovery", "email", "signup", "magiclink", "email_change"];
 
 /**
- * Landing route for Supabase email links (invitation, password recovery).
+ * Landing route for Supabase email links (invitation, password recovery,
+ * P6.4 sign-up confirmation).
  * Exchanges the one-time token for a session cookie, then continues to `next`
  * — e.g. /auth/set-password for a new invitee. Requires the Supabase email
  * templates to link here (see docs/security.md).
@@ -15,7 +16,8 @@ export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const tokenHash = searchParams.get("token_hash");
   const type = searchParams.get("type") as EmailOtpType | null;
-  const fallbackNext = type === "invite" || type === "recovery" ? "/auth/set-password" : "/dashboard";
+  // P6.4: a confirmed self-registration continues to the linking-code page.
+  const fallbackNext = type === "invite" || type === "recovery" ? "/auth/set-password" : type === "signup" || type === "email" ? "/link-account" : "/dashboard";
   const next = safeNextPath(searchParams.get("next"), fallbackNext);
 
   if (tokenHash && type && ALLOWED_TYPES.includes(type)) {

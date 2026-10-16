@@ -34,23 +34,30 @@ export default function AppointmentsPage() {
   const weekStart = startOfWeek(anchorDate);
   const weekEnd = endOfWeek(anchorDate);
 
-  const dayQuery = useAppointments({ date: dateIso, doctorId, status, type, pageSize: 100 });
-  const weekQuery = useAppointments({
-    dateFrom: format(weekStart, "yyyy-MM-dd"),
-    dateTo: format(weekEnd, "yyyy-MM-dd"),
-    doctorId,
-    status,
-    type,
-    pageSize: 200,
-  });
-  const monthQuery = useAppointments({
-    dateFrom: format(new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1), "yyyy-MM-dd"),
-    dateTo: format(new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 0), "yyyy-MM-dd"),
-    doctorId,
-    status,
-    type,
-    pageSize: 500,
-  });
+  // Only the visible view's range is fetched; the others load when their tab is opened.
+  const dayQuery = useAppointments({ date: dateIso, doctorId, status, type, pageSize: 100 }, { enabled: view === "day" });
+  const weekQuery = useAppointments(
+    {
+      dateFrom: format(weekStart, "yyyy-MM-dd"),
+      dateTo: format(weekEnd, "yyyy-MM-dd"),
+      doctorId,
+      status,
+      type,
+      pageSize: 200,
+    },
+    { enabled: view === "week" }
+  );
+  const monthQuery = useAppointments(
+    {
+      dateFrom: format(new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1), "yyyy-MM-dd"),
+      dateTo: format(new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 0), "yyyy-MM-dd"),
+      doctorId,
+      status,
+      type,
+      pageSize: 500,
+    },
+    { enabled: view === "month" }
+  );
 
   const navigate = (dir: 1 | -1) => {
     if (view === "day") setAnchorDate((d) => addDays(d, dir));

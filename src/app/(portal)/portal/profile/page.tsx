@@ -1,6 +1,8 @@
 "use client";
 
 import { toast } from "sonner";
+import { LivePortalHealthProfile } from "@/components/portal/live-portal-care";
+import { useLiveData } from "@/lib/data-source";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,7 +16,7 @@ import { usePatient, useUpdatePatient } from "@/hooks/use-patients";
 import { useDataStore } from "@/store/data-store";
 import { useState, useEffect } from "react";
 
-export default function PortalProfilePage() {
+function DemoPortalProfilePage() {
   const user = useCurrentUser();
   const { data: patient, isLoading } = usePatient(user?.patientId);
   const branch = useDataStore((s) => (patient ? s.db.branches.find((b) => b.id === patient.branchId) : undefined));
@@ -92,4 +94,9 @@ export default function PortalProfilePage() {
       </Card>
     </div>
   );
+}
+
+export default function PortalProfilePage() {
+  // Live (signed-in patient): their own records from the clinic database. Demo mode: the original mock page.
+  return useLiveData() ? <LivePortalHealthProfile /> : <DemoPortalProfilePage />;
 }

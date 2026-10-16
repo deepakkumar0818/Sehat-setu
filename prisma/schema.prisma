@@ -177,6 +177,9 @@ model Clinic {
   payments       Payment[]
   inventoryItems InventoryItem[]
   reorderLevels  InventoryReorderLevel[]
+  labReports     LabReport[]
+  documents      PatientDocument[]
+  expenses       Expense[]
 
   @@map("clinics")
 }
@@ -205,6 +208,9 @@ model Branch {
   inventoryItems   InventoryItem[]
   reorderLevels    InventoryReorderLevel[]
   staffInvitations StaffInvitation[]
+  labReports       LabReport[]
+  documents        PatientDocument[]
+  expenses         Expense[]
 
   @@unique([clinicId, code])
   @@unique([clinicId, id])
@@ -264,11 +270,23 @@ model User {
   createdAt      DateTime   @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime   @updatedAt @db.Timestamptz(6)
 
-  memberships     ClinicMembership[]
-  stockMovements  StockMovement[]
-  doctorProfile   DoctorProfile?
-  patient         Patient?
-  invitationsSent StaffInvitation[]  @relation("InvitationInviter")
+  memberships        ClinicMembership[]
+  stockMovements     StockMovement[]
+  doctorProfile      DoctorProfile?
+  patient            Patient?
+  invitationsSent    StaffInvitation[]  @relation("InvitationInviter")
+  labReportsCreated  LabReport[]        @relation("LabReportCreator")
+  labReportsReviewed LabReport[]        @relation("LabReportReviewer")
+  labReportsShared   LabReport[]        @relation("LabReportSharer")
+  documentsUploaded  PatientDocument[]  @relation("DocumentUploader")
+  documentsArchived  PatientDocument[]  @relation("DocumentArchiver")
+  linkCodesIssued    PatientLinkCode[]  @relation("LinkCodeIssuer")
+  linkCodesRedeemed  PatientLinkCode[]  @relation("LinkCodeRedeemer")
+  linkCodesRevoked   PatientLinkCode[]  @relation("LinkCodeRevoker")
+  intakeProfilesReported PatientIntakeProfile[] @relation("IntakeReporter")
+  symptomReportsReported PatientSymptomReport[] @relation("SymptomReporter")
+  expensesRecorded   Expense[]          @relation("ExpenseRecorder")
+  expensesVoided     Expense[]          @relation("ExpenseVoider")
 
   @@map("users")
 }
@@ -362,6 +380,7 @@ model DoctorProfile {
   department   Department?    @relation(fields: [clinicId, departmentId], references: [clinicId, id], onDelete: Restrict)
   branches     DoctorBranch[]
   appointments Appointment[]
+  labReports   LabReport[]
 
   @@unique([clinicId, id])
   @@unique([clinicId, registrationNumber])
@@ -417,11 +436,17 @@ model Patient {
   createdAt             DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt             DateTime      @updatedAt @db.Timestamptz(6)
 
-  clinic       Clinic        @relation(fields: [clinicId], references: [id], onDelete: Restrict)
-  branch       Branch        @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
-  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  clinic       Clinic            @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  branch       Branch            @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
+  user         User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
   appointments Appointment[]
   invoices     Invoice[]
+  labReports   LabReport[]
+  documents    PatientDocument[]
+  linkCodes    PatientLinkCode[]
+  /// At most one (patient_intake_profiles."patientId" is unique).
+  intakeProfiles PatientIntakeProfile[]
+  symptomReports PatientSymptomReport[]
 
   @@unique([clinicId, patientNumber])
   @@unique([clinicId, id])
@@ -457,6 +482,7 @@ model Appointment {
   doctor       DoctorProfile @relation(fields: [clinicId, doctorId], references: [clinicId, id], onDelete: Restrict)
   consultation Consultation?
   invoice      Invoice?
+  symptomReports PatientSymptomReport[]
 
   @@unique([clinicId, id])
   @@index([clinicId, startsAt])
@@ -487,9 +513,11 @@ model Consultation {
   createdAt       DateTime           @default(now()) @db.Timestamptz(6)
   updatedAt       DateTime           @updatedAt @db.Timestamptz(6)
 
-  clinic        Clinic         @relation(fields: [clinicId], references: [id], onDelete: Restrict)
-  appointment   Appointment    @relation(fields: [clinicId, appointmentId], references: [clinicId, id], onDelete: Restrict)
+  clinic        Clinic            @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  appointment   Appointment       @relation(fields: [clinicId, appointmentId], references: [clinicId, id], onDelete: Restrict)
   prescriptions Prescription[]
+  labReports    LabReport[]
+  documents     PatientDocument[]
 
   @@unique([clinicId, appointmentId])
   @@unique([clinicId, id])
@@ -790,6 +818,54 @@ enum InvitationDelivery {
   FAILED
 }
 
+/// P6.4 (migration 20261022000000_patient_link_codes).
+enum PatientLinkCodeStatus {
+  ACTIVE
+  REDEEMED
+  REVOKED
+}
+
+/// A clinic-issued, single-use code that links a self-registered portal account
+/// to ONE patient record. Only the SHA-256 hash is stored. The runtime role has
+/// no privileges on this table: app.issue/revoke/redeem_patient_link_code and
+/// app.patient_portal_link_status are the only way in. At most one ACTIVE code
+/// per patient (partial unique index patient_link_codes_one_active, SQL only).
+model PatientLinkCode {
+  id               String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinicId         String                @db.Uuid
+  patientId        String                @db.Uuid
+  codeHash         String                @unique
+  status           PatientLinkCodeStatus @default(ACTIVE)
+  expiresAt        DateTime              @db.Timestamptz(6)
+  issuedByUserId   String                @db.Uuid
+  redeemedAt       DateTime?             @db.Timestamptz(6)
+  redeemedByUserId String?               @db.Uuid
+  revokedAt        DateTime?             @db.Timestamptz(6)
+  revokedByUserId  String?               @db.Uuid
+  createdAt        DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime              @default(now()) @db.Timestamptz(6)
+
+  patient    Patient @relation(fields: [clinicId, patientId], references: [clinicId, id], onDelete: Restrict)
+  issuedBy   User    @relation("LinkCodeIssuer", fields: [issuedByUserId], references: [id], onDelete: Restrict)
+  redeemedBy User?   @relation("LinkCodeRedeemer", fields: [redeemedByUserId], references: [id], onDelete: Restrict)
+  revokedBy  User?   @relation("LinkCodeRevoker", fields: [revokedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([clinicId, createdAt])
+  @@index([patientId, status])
+  @@map("patient_link_codes")
+}
+
+/// Redemption attempts for the per-account limits (no code, clinic or patient). Functions only.
+model PatientLinkAttempt {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  authUserId String
+  succeeded  Boolean
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([authUserId, createdAt])
+  @@map("patient_link_attempts")
+}
+
 /// An Administrator's invitation for one person to join one clinic branch in one
 /// role. Written only by app.create/resend/revoke/record/accept_* functions (the
 /// runtime role has SELECT only). "Expired" = PENDING with expiresAt in the past.
@@ -886,4 +962,278 @@ model AuditEvent {
   @@index([actorUserId, occurredAt])
   @@index([action, occurredAt])
   @@map("audit_events")
+}
+
+// ---------------------------------------------------------------------------
+// Lab reports & patient documents (migration 20261021000000_patient_documents)
+// ---------------------------------------------------------------------------
+// The runtime role has SELECT only on these tables (RLS: clinical rows for
+// clinical readers, administrative rows for patient_document.view holders,
+// UPLOADING/FAILED never visible). Every write is an app.* SECURITY DEFINER
+// function — see src/server/data/documents.ts and lab-reports.ts. Files live in
+// the private "patient-documents" Storage bucket under `storageKey`
+// ("<clinicId>/<id>", enforced by a CHECK constraint).
+
+enum DocumentCategory {
+  LAB_REPORT
+  IMAGING
+  DISCHARGE_SUMMARY
+  REFERRAL
+  CLINICAL_OTHER
+  ID_PROOF
+  INSURANCE
+  CONSENT
+  ADMIN_OTHER
+}
+
+enum DocumentStatus {
+  UPLOADING
+  AVAILABLE
+  FAILED
+  ARCHIVED
+}
+
+enum DocumentArchiveReason {
+  UPLOADED_IN_ERROR
+  WRONG_PATIENT
+  DUPLICATE
+  ILLEGIBLE
+  SUPERSEDED
+  OTHER
+}
+
+enum LabReportStatus {
+  PENDING
+  AVAILABLE
+  REVIEWED
+}
+
+model LabReport {
+  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinicId            String          @db.Uuid
+  branchId            String          @db.Uuid
+  patientId           String          @db.Uuid
+  consultationId      String?         @db.Uuid
+  orderedByDoctorId   String?         @db.Uuid
+  testType            String
+  title               String
+  status              LabReportStatus @default(PENDING)
+  resultDate          DateTime?       @db.Date
+  /// Array (≤100) of {parameter, value, unit, range, flag}; validated by app.set_lab_report_values.
+  values              Json            @default("[]")
+  notes               String?
+  reviewedByUserId    String?         @db.Uuid
+  reviewedAt          DateTime?       @db.Timestamptz(6)
+  sharedWithPatientAt DateTime?       @db.Timestamptz(6)
+  sharedByUserId      String?         @db.Uuid
+  createdByUserId     String          @db.Uuid
+  createdAt           DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime        @default(now()) @db.Timestamptz(6)
+
+  clinic       Clinic            @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  branch       Branch            @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
+  patient      Patient           @relation(fields: [clinicId, patientId], references: [clinicId, id], onDelete: Restrict)
+  consultation Consultation?     @relation(fields: [clinicId, consultationId], references: [clinicId, id], onDelete: Restrict)
+  orderedBy    DoctorProfile?    @relation(fields: [clinicId, orderedByDoctorId], references: [clinicId, id], onDelete: Restrict)
+  reviewedBy   User?             @relation("LabReportReviewer", fields: [reviewedByUserId], references: [id], onDelete: Restrict)
+  sharedBy     User?             @relation("LabReportSharer", fields: [sharedByUserId], references: [id], onDelete: Restrict)
+  createdBy    User              @relation("LabReportCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  documents    PatientDocument[]
+
+  @@unique([clinicId, id])
+  @@index([clinicId, patientId])
+  @@index([clinicId, status, createdAt])
+  @@map("lab_reports")
+}
+
+model PatientDocument {
+  id               String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinicId         String                 @db.Uuid
+  branchId         String                 @db.Uuid
+  patientId        String                 @db.Uuid
+  labReportId      String?                @db.Uuid
+  consultationId   String?                @db.Uuid
+  category         DocumentCategory
+  title            String
+  /// Sanitised display name only — never used as a storage path.
+  originalFilename String
+  mimeType         String
+  sizeBytes        Int
+  sha256           String
+  /// "<clinicId>/<id>" (CHECK constraint); the only object key the server reads or writes for this row.
+  storageKey       String                 @unique
+  status           DocumentStatus         @default(UPLOADING)
+  uploadedByUserId String                 @db.Uuid
+  uploadedAt       DateTime?              @db.Timestamptz(6)
+  failedAt         DateTime?              @db.Timestamptz(6)
+  archivedAt       DateTime?              @db.Timestamptz(6)
+  archivedByUserId String?                @db.Uuid
+  archiveReason    DocumentArchiveReason?
+  archiveNote      String?
+  createdAt        DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime               @default(now()) @db.Timestamptz(6)
+
+  clinic       Clinic        @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  branch       Branch        @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
+  patient      Patient       @relation(fields: [clinicId, patientId], references: [clinicId, id], onDelete: Restrict)
+  labReport    LabReport?    @relation(fields: [clinicId, labReportId], references: [clinicId, id], onDelete: Restrict)
+  consultation Consultation? @relation(fields: [clinicId, consultationId], references: [clinicId, id], onDelete: Restrict)
+  uploadedBy   User          @relation("DocumentUploader", fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+  archivedBy   User?         @relation("DocumentArchiver", fields: [archivedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([clinicId, patientId, status])
+  @@index([clinicId, labReportId])
+  @@index([clinicId, patientId, sha256])
+  @@index([status, createdAt])
+  @@map("patient_documents")
+}
+
+// ---------------------------------------------------------------------------
+// Patient onboarding (P6.5, migration 20261023000000_patient_intake).
+// PATIENT-REPORTED answers, kept apart from the clinic's own patient record
+// (which onboarding never changes). Written only through the SECURITY DEFINER
+// functions app.save_patient_intake_personal / _medical, skip_…, complete_…
+// and app.submit_patient_symptom_report; the runtime role can only SELECT.
+
+enum IntakeAllergyStatus {
+  /// Not answered yet.
+  NOT_ANSWERED
+  /// "Unknown / not yet confirmed".
+  UNKNOWN
+  /// An explicit "No known allergies".
+  NONE_KNOWN
+  /// At least one allergy listed.
+  HAS_ALLERGIES
+}
+
+enum SymptomOnset {
+  TODAY
+  DAYS_1_3
+  DAYS_4_7
+  WEEKS_1_4
+  OVER_1_MONTH
+  UNSURE
+}
+
+enum SymptomSeverity {
+  MILD
+  MODERATE
+  SEVERE
+}
+
+model PatientIntakeProfile {
+  id                           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinicId                     String              @db.Uuid
+  patientId                    String              @unique @db.Uuid
+  legalName                    String
+  dateOfBirth                  DateTime            @db.Date
+  gender                       Gender?
+  /// E.164.
+  phone                        String
+  addressLine                  String
+  city                         String
+  state                        String?
+  postalCode                   String?
+  emergencyContactName         String?
+  emergencyContactRelationship String?
+  emergencyContactPhone        String?
+  allergyStatus                IntakeAllergyStatus @default(NOT_ANSWERED)
+  /// [{ substance, reaction? }] — patient-reported.
+  allergies                    Json                @default("[]")
+  /// [{ name, dose?, frequency? }] — patient-reported.
+  medications                  Json                @default("[]")
+  conditions                   String[]            @default([])
+  pastSurgeries                String?
+  familyHistory                String?
+  personalSavedAt              DateTime            @db.Timestamptz(6)
+  medicalReviewedAt            DateTime?           @db.Timestamptz(6)
+  /// Onboarding complete (server-side source of truth for the portal popup).
+  completedAt                  DateTime?           @db.Timestamptz(6)
+  reportedByUserId             String              @db.Uuid
+  createdAt                    DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt                    DateTime            @default(now()) @db.Timestamptz(6)
+
+  patient    Patient @relation(fields: [clinicId, patientId], references: [clinicId, id], onDelete: Restrict)
+  reportedBy User    @relation("IntakeReporter", fields: [reportedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([clinicId])
+  @@map("patient_intake_profiles")
+}
+
+/// Append-only pre-visit questionnaire (patient-reported; never a diagnosis).
+model PatientSymptomReport {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinicId         String           @db.Uuid
+  patientId        String           @db.Uuid
+  appointmentId    String?          @db.Uuid
+  /// Client-generated id: a repeated submission returns the first report.
+  requestId        String           @db.Uuid
+  reason           String
+  symptoms         String
+  onset            SymptomOnset
+  severity         SymptomSeverity?
+  notes            String?
+  reportedByUserId String           @db.Uuid
+  createdAt        DateTime         @default(now()) @db.Timestamptz(6)
+
+  patient     Patient      @relation(fields: [clinicId, patientId], references: [clinicId, id], onDelete: Restrict)
+  appointment Appointment? @relation(fields: [clinicId, appointmentId], references: [clinicId, id], onDelete: Restrict)
+  reportedBy  User         @relation("SymptomReporter", fields: [reportedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([patientId, requestId], map: "patient_symptom_reports_request_key")
+  @@index([clinicId, patientId, createdAt])
+  @@index([appointmentId])
+  @@map("patient_symptom_reports")
+}
+
+// ---------------------------------------------------------------------------
+// Expenses
+// ---------------------------------------------------------------------------
+
+enum ExpenseCategory {
+  RENT
+  SALARY
+  UTILITIES
+  EQUIPMENT
+  MEDICINE_PURCHASE
+  LAB_EXPENSE
+  MARKETING
+  MAINTENANCE
+  OTHER
+}
+
+enum ExpenseStatus {
+  RECORDED
+  VOIDED
+}
+
+/// A recorded clinic expense (integer paise). Never edited or deleted: a wrong
+/// entry is VOIDED with a reason. Writes are limited by column grants and RLS.
+model Expense {
+  id              String          @id @default(uuid()) @db.Uuid
+  clinicId        String          @db.Uuid
+  branchId        String          @db.Uuid
+  category        ExpenseCategory
+  description     String
+  amountPaise     Int
+  expenseDate     DateTime        @db.Date
+  paidTo          String?
+  reference       String?
+  status          ExpenseStatus   @default(RECORDED)
+  voidReason      String?
+  voidedByUserId  String?         @db.Uuid
+  voidedAt        DateTime?       @db.Timestamptz(6)
+  createdByUserId String          @db.Uuid
+  createdAt       DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime        @updatedAt @db.Timestamptz(6)
+
+  clinic    Clinic @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  branch    Branch @relation(fields: [clinicId, branchId], references: [clinicId, id], onDelete: Restrict)
+  createdBy User   @relation("ExpenseRecorder", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  voidedBy  User?  @relation("ExpenseVoider", fields: [voidedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([clinicId, id])
+  @@index([clinicId, expenseDate])
+  @@index([clinicId, branchId, expenseDate])
+  @@map("expenses")
 }

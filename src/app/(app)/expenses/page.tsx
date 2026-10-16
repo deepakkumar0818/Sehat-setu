@@ -1,5 +1,7 @@
 "use client";
 
+import { useLiveData } from "@/lib/data-source";
+import { LiveExpenses } from "@/components/clinic-admin/live-expenses";
 import { useState } from "react";
 import { PlusIcon, WalletIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,14 +20,14 @@ import type { Expense, ExpenseCategory } from "@/types";
 
 const CATEGORIES: ExpenseCategory[] = ["rent", "salary", "utilities", "equipment", "medicine_purchase", "lab_expense", "marketing", "maintenance", "other"];
 
-export default function ExpensesPage() {
+function DemoExpensesPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<ExpenseCategory | "all">("all");
   const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const { data, isLoading } = useExpenses({ search, category, page, pageSize: 10 });
-  // Expenses aren't in the clinic database yet, so this page stays entirely on demo data (with the demo notice).
+  // Demo mode only (the live page is LiveExpenses).
   const { data: summary, isLoading: summaryLoading } = useDemoBillingSummary();
   const netIncome = summary ? summary.totalRevenueThisMonth - (summary.totalExpensesThisMonth ?? 0) : undefined;
 
@@ -79,4 +81,9 @@ export default function ExpensesPage() {
       <ExpenseFormDialog open={dialogOpen} onOpenChange={setDialogOpen} />
     </div>
   );
+}
+
+// Live staff app: the clinic database. Demo mode keeps the in-browser sample data.
+export default function ExpensesPage() {
+  return useLiveData() ? <LiveExpenses /> : <DemoExpensesPage />;
 }

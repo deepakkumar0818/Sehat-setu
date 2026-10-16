@@ -1,5 +1,7 @@
 "use client";
 
+import { useLiveData } from "@/lib/data-source";
+import { LiveBranches } from "@/components/clinic-admin/live-branches";
 import { useState } from "react";
 import { toast } from "sonner";
 import { BuildingIcon, PlusIcon } from "lucide-react";
@@ -16,7 +18,7 @@ import { useBranchesForClinic, useCreateBranch, useUpdateBranchStatus } from "@/
 import { useCurrentClinicId } from "@/hooks/use-current-clinic-id";
 import { useCurrentUser } from "@/hooks/use-current-user";
 
-export default function ClinicBranchesPage() {
+function DemoClinicBranchesPage() {
   const clinicId = useCurrentClinicId();
   const user = useCurrentUser();
   const [search, setSearch] = useState("");
@@ -142,4 +144,9 @@ export default function ClinicBranchesPage() {
       </Dialog>
     </div>
   );
+}
+
+// Live staff app: the clinic database. Demo mode keeps the in-browser sample data.
+export default function ClinicBranchesPage() {
+  return useLiveData() ? <LiveBranches /> : <DemoClinicBranchesPage />;
 }

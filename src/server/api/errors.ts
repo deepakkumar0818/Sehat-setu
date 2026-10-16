@@ -31,7 +31,14 @@ export type DataErrorCode =
   | "UNAVAILABLE"
   | "DOCTOR_PROFILE_EXISTS"
   | "EMAIL_MISMATCH"
-  | "EMAIL_NOT_VERIFIED";
+  | "EMAIL_NOT_VERIFIED"
+  // P6.2 patient documents and lab reports.
+  | "UNSUPPORTED_FILE"
+  | "FILE_TOO_LARGE"
+  | "GONE"
+  | "STORAGE_UNAVAILABLE"
+  | "SHARED_LOCKED"
+  | "NOT_REVIEWED";
 
 const STATUS: Record<DataErrorCode, number> = {
   INVALID_INPUT: 400,
@@ -60,6 +67,12 @@ const STATUS: Record<DataErrorCode, number> = {
   DOCTOR_PROFILE_EXISTS: 409,
   EMAIL_MISMATCH: 403,
   EMAIL_NOT_VERIFIED: 403,
+  UNSUPPORTED_FILE: 415,
+  FILE_TOO_LARGE: 413,
+  GONE: 410,
+  STORAGE_UNAVAILABLE: 503,
+  SHARED_LOCKED: 409,
+  NOT_REVIEWED: 409,
 };
 
 export class DataError extends Error {

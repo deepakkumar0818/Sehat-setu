@@ -17,6 +17,7 @@ import { ErrorState } from "@/components/shared/error-state";
 import { PersonAvatar } from "@/components/shared/person-avatar";
 import { AINotesAssistant } from "@/components/consultations/ai-notes-assistant";
 import { PrescriptionBuilderDialog } from "@/components/prescriptions/prescription-builder-dialog";
+import { ConsultationLabResults } from "@/components/lab-reports/consultation-lab-results";
 import { LAB_REPORT_TYPES, SYMPTOMS, DIAGNOSES } from "@/data/pools";
 import { formatDate } from "@/lib/format";
 import { useCompleteConsultation, useConsultation, useUpdateConsultation } from "@/hooks/use-clinical";
@@ -281,6 +282,8 @@ function Workspace({ consultation, patient, live, onChanged }: { consultation: C
               ) : (
                 <div className="flex flex-wrap gap-1.5">{draft.labTestsOrdered.map((t) => <Badge key={t} variant="outline">{t}</Badge>)}</div>
               )}
+              {/* Live: results for the SAVED ordered tests (lab reports, P6.2). */}
+              {live && <ConsultationLabResults consultationId={consultation.id} patientId={consultation.patientId} tests={consultation.labTestsOrdered} />}
             </CardContent>
           </Card>
 

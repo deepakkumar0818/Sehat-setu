@@ -12,6 +12,11 @@ export interface VerifiedAuthUser {
   id: string;
   email: string | null;
   emailConfirmed: boolean;
+  /**
+   * Supabase user_metadata: what the user typed when registering (self-reported,
+   * editable by the user — validate before use; never an authorisation input).
+   */
+  metadata?: Record<string, unknown>;
 }
 
 export type AuthUserLookup =
@@ -149,10 +154,14 @@ export function resolveTenantContext(identity: Identity, requestedClinicId?: str
 export function resolvePatientContext(identity: Identity, requestedClinicId?: string | null): PatientContext {
   if (identity.status !== "ACTIVE") throw new AuthError("ACCOUNT_DISABLED");
   const links = identity.patientLinks ?? [];
-  const eligible = identity.memberships
-    .filter((m) => isUsable(m) && m.roleKey === "PATIENT" && links.some((l) => l.clinicId === m.clinicId))
+  const patientMemberships = identity.memberships.filter((m) => isUsable(m) && m.roleKey === "PATIENT");
+  if (patientMemberships.length === 0) throw new AuthError("NO_MEMBERSHIP");
+  const eligible = patientMemberships
+    .filter((m) => links.some((l) => l.clinicId === m.clinicId))
     .sort((a, b) => a.clinicName.localeCompare(b.clinicName) || a.clinicId.localeCompare(b.clinicId));
-  if (eligible.length === 0) throw new AuthError("NO_MEMBERSHIP");
+  // A portal account whose record link is missing or was removed: its own state (not NO_MEMBERSHIP, which
+  // would send the user back to /portal). Never reveals whether a matching patient record exists.
+  if (eligible.length === 0) throw new AuthError("PATIENT_NOT_LINKED");
   const chosen = (requestedClinicId && eligible.find((m) => m.clinicId === requestedClinicId)) || eligible[0];
   return {
     authUserId: identity.authUserId,

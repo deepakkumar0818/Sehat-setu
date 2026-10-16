@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { LivePortalAppointments } from "@/components/portal/live-portal-care";
+import { useLiveData } from "@/lib/data-source";
+import type { PortalAppointmentScope } from "@/lib/live-types";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { CalendarDaysIcon, PlusIcon, VideoIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -49,7 +52,7 @@ function AppointmentCard({ appt, onCancel }: { appt: AppointmentWithNames; onCan
   );
 }
 
-export default function PortalAppointmentsPage() {
+function DemoPortalAppointmentsPage() {
   const user = useCurrentUser();
   const [bookOpen, setBookOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<string | null>(null);
@@ -109,4 +112,16 @@ export default function PortalAppointmentsPage() {
       />
     </div>
   );
+}
+
+export default function PortalAppointmentsPage() {
+  // Live (signed-in patient): their own records from the clinic database. Demo mode: the original mock page.
+  return useLiveData() ? <Suspense fallback={null}><LiveAppointmentsFromUrl /></Suspense> : <DemoPortalAppointmentsPage />;
+}
+
+/** ?tab=past|cancelled|all opens that tab (e.g. from Home's "Recent visits"). */
+function LiveAppointmentsFromUrl() {
+  const tab = useSearchParams().get("tab");
+  const initial: PortalAppointmentScope = tab === "past" || tab === "cancelled" || tab === "all" ? tab : "upcoming";
+  return <LivePortalAppointments initialTab={initial} />;
 }

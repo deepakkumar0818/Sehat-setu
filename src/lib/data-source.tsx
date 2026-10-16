@@ -32,7 +32,7 @@ export function useTodayKey(): string {
 }
 
 /** Staff-app routes whose data comes from the clinic database. Others show a demo-data notice in live mode. */
-export const LIVE_ROUTE_PREFIXES = ["/dashboard", "/patients", "/appointments", "/waiting-room", "/doctor-roster", "/staff", "/billing", "/consultations", "/prescriptions", "/inventory", "/notifications", "/analytics"] as const;
+export const LIVE_ROUTE_PREFIXES = ["/dashboard", "/patients", "/appointments", "/waiting-room", "/doctor-roster", "/staff", "/billing", "/consultations", "/prescriptions", "/inventory", "/notifications", "/analytics", "/reports", "/documents", "/clinic/branches", "/clinic/departments", "/clinic/specialties", "/audit-log", "/expenses", "/subscription", "/settings"] as const;
 
 export function isLiveRoute(pathname: string): boolean {
   return LIVE_ROUTE_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));

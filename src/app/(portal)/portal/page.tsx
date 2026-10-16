@@ -22,6 +22,8 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { useAppointments } from "@/hooks/use-appointments";
 import { useDataStore } from "@/store/data-store";
 import { todayDateStr } from "@/lib/demo-clock";
+import { useLiveData } from "@/lib/data-source";
+import { LivePortalHome } from "@/components/portal/live-portal";
 
 const QUICK_ACTIONS = [
   { href: "#book", label: "Book Appointment", icon: CalendarDaysIcon },
@@ -33,6 +35,11 @@ const QUICK_ACTIONS = [
 ];
 
 export default function PortalHomePage() {
+  // Live (signed-in patient): the patient's own shared records (P6.3). Demo mode: the original mock home.
+  return useLiveData() ? <LivePortalHome /> : <DemoPortalHomePage />;
+}
+
+function DemoPortalHomePage() {
   const user = useCurrentUser();
   const [bookOpen, setBookOpen] = useState(false);
   const doctors = useDataStore((s) => s.db.doctors);
