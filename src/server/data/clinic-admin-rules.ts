@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { AuditArea, LiveExpenseCategory } from "@/lib/live-types";
 
-// Pure rules for the clinic-admin screens (branches, departments, clinic
-// profile, audit log, expenses). Shared by the server modules and unit tests.
+// Pure rules for the clinic-admin screens (branches, departments, lab tests,
+// clinic profile, audit log, expenses). Shared by the server modules and unit tests.
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const optionalText = (max: number) =>
@@ -45,6 +45,25 @@ export function nextFreeCode(base: string, taken: ReadonlySet<string>): string {
   for (let i = 2; i < 1000; i++) if (!taken.has(`${base}-${i}`)) return `${base}-${i}`;
   throw new Error("no free branch code");
 }
+
+// --- Lab test master -----------------------------------------------------------
+
+export const LAB_TEST_CATEGORIES = ["pathology", "radiology", "cardiology", "other"] as const;
+
+// 60: the longest test type a lab report accepts (document-rules.ts), so any ordered test can get a result.
+export const labTestInputSchema = z.object({
+  name: text(60),
+  category: z.enum(LAB_TEST_CATEGORIES).default("other"),
+});
+
+export const labTestPatchSchema = z.union([
+  z.object({ status: z.enum(["active", "inactive"]) }).strict(),
+  z
+    .object({ name: text(60), category: z.enum(LAB_TEST_CATEGORIES) })
+    .partial()
+    .strict()
+    .refine((v) => Object.keys(v).length > 0, "Nothing to change"),
+]);
 
 // --- Departments ---------------------------------------------------------------
 
@@ -108,8 +127,10 @@ const TABLE_AREA: Record<string, AuditArea> = {
   staff_invitation_doctor_details: "staff",
   roles: "staff",
   role_permissions: "staff",
+  member_permission_overrides: "staff",
   branches: "setup",
   departments: "setup",
+  lab_test_types: "setup",
   clinics: "setup",
 };
 
@@ -150,8 +171,10 @@ const NOUN: Record<string, string> = {
   staff_invitation_doctor_details: "a doctor invitation",
   roles: "a role",
   role_permissions: "a role permission",
+  member_permission_overrides: "a staff member's permissions",
   branches: "a branch",
   departments: "a department",
+  lab_test_types: "a lab test",
   clinics: "the clinic profile",
 };
 

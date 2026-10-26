@@ -144,8 +144,8 @@ describe("live screens never show demo data (P5)", () => {
     for (const f of ["components/doctors/doctor-form-dialog.tsx", "components/staff/staff-form-dialog.tsx"]) expect(read(f), f).toMatch(/return live \? null :/);
   });
 
-  it("/clinic/users redirects to /staff with live data", () => {
-    expect(read("app/(app)/clinic/users/layout.tsx")).toMatch(/isSupabaseAuthEnabled\(\)\) redirect\("\/staff"\)/);
+  it("/clinic/users shows the database's users with live data (never the demo users)", () => {
+    expect(read("app/(app)/clinic/users/page.tsx")).toMatch(/useLiveData\(\) \? <LiveClinicUsers \/> : <DemoClinicUsersPage \/>/);
   });
 });
 
@@ -323,9 +323,9 @@ describe("live route list", () => {
     expect(isLiveRoute("/inventory/branch/medicine")).toBe(true);
     expect(isLiveRoute("/notifications")).toBe(true);
     // Clinic admin (P7): expenses table, setup screens, audit log, plan & usage, settings.
-    for (const p of ["/expenses", "/clinic/branches", "/clinic/departments", "/clinic/specialties", "/audit-log", "/subscription", "/settings"]) expect(isLiveRoute(p), p).toBe(true);
-    // Still demo data in live mode (custom roles, the demo users page and dashboard).
-    for (const p of ["/clinic/users", "/clinic/settings/roles", "/clinic/dashboard", "/ai-assistant"]) expect(isLiveRoute(p), p).toBe(false);
+    for (const p of ["/expenses", "/clinic/branches", "/clinic/departments", "/clinic/lab-tests", "/clinic/specialties", "/clinic/users", "/audit-log", "/subscription", "/settings"]) expect(isLiveRoute(p), p).toBe(true);
+    // Still demo data in live mode (custom roles and the demo dashboard).
+    for (const p of ["/clinic/settings/roles", "/clinic/dashboard", "/ai-assistant"]) expect(isLiveRoute(p), p).toBe(false);
     expect(isLiveRoute("/reports/abc")).toBe(true); // lab reports (P6.2)
     expect(isLiveRoute("/documents")).toBe(true); // patient documents (P6.2)
     expect(isLiveRoute("/patientsx")).toBe(false);

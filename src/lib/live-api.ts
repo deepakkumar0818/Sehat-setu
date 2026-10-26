@@ -60,6 +60,10 @@ import type {
   ClinicProfileInput,
   DepartmentInput,
   DepartmentPage,
+  LabTestCategory,
+  LabTestPage,
+  LiveLabTest,
+  ClinicUsersPage,
   ExpenseInput,
   ExpensePage,
   LiveDepartment,
@@ -71,7 +75,7 @@ import type {
 
 import type { ArchiveReason, DocumentCategoryKey, LabValue } from "@/lib/documents";
 import type { ReportExportKey } from "@/lib/reports";
-import type { Branch, Consultation, Doctor, Patient, Payment, PatientStatus, PaymentMethod, StaffMember, TimelineEvent } from "@/types";
+import type { Branch, Consultation, Doctor, Patient, Payment, PatientStatus, PaymentMethod, StaffMember, TimelineEvent, UserRole } from "@/types";
 
 export interface PortalPage<T> {
   items: T[];
@@ -339,6 +343,18 @@ export const liveApi = {
     create: (input: DepartmentInput) => apiPost<LiveDepartment>("/api/v1/departments", input),
     update: (id: string, patch: Partial<Omit<DepartmentInput, "branchId">>) => apiPatch<LiveDepartment>(`/api/v1/departments/${encodeURIComponent(id)}`, patch),
     setStatus: (id: string, status: LiveDepartment["status"]) => apiPatch<LiveDepartment>(`/api/v1/departments/${encodeURIComponent(id)}`, { status }),
+  },
+  clinicUsers: {
+    list: () => apiGet<ClinicUsersPage>("/api/v1/clinic-users"),
+    setRole: (membershipId: string, role: UserRole) => apiPatch<{ ok: true }>(`/api/v1/clinic-users/${encodeURIComponent(membershipId)}`, { role }),
+    setPermissions: (membershipId: string, granted: string[], revoked: string[]) =>
+      apiPatch<{ ok: true }>(`/api/v1/clinic-users/${encodeURIComponent(membershipId)}`, { granted, revoked }),
+  },
+  labTests: {
+    list: () => apiGet<LabTestPage>("/api/v1/lab-tests"),
+    create: (input: { name: string; category: LabTestCategory }) => apiPost<LiveLabTest>("/api/v1/lab-tests", input),
+    update: (id: string, patch: { name?: string; category?: LabTestCategory } | { status: LiveLabTest["status"] }) =>
+      apiPatch<LiveLabTest>(`/api/v1/lab-tests/${encodeURIComponent(id)}`, patch),
   },
   clinic: {
     get: () => apiGet<ClinicProfile>("/api/v1/clinic"),

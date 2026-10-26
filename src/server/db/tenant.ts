@@ -50,15 +50,15 @@ export async function withPatientDb<T>(ctx: PatientContext, fn: (tx: TenantTx) =
  * resolve which clinics they belong to.
  */
 export async function withIdentityDb<T>(authUserId: string, fn: (tx: TenantTx) => Promise<T>): Promise<T> {
-  return prisma.$transaction(
-    async (tx) => {
-      await tx.$executeRaw`SELECT set_config('app.auth_user_id', ${authUserId}, true)`;
-      return fn(tx);
-    },
-    // READ COMMITTED: each statement sees rows committed by concurrent requests,
-    // which first-sign-in linking relies on (see src/server/auth/link-user.ts).
-    { isolationLevel: "ReadCommitted" }
-  );
+  // READ COMMITTED: each statement sees rows committed by concurrent requests,
+  // which first-sign-in linking relies on (see src/server/auth/link-user.ts).
+  // It is Postgres's (and this database's) default, so it isn't requested
+  // explicitly: Prisma would send SET TRANSACTION ISOLATION LEVEL as an extra
+  // round-trip on every authenticated request.
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.auth_user_id', ${authUserId}, true)`;
+    return fn(tx);
+  });
 }
 
 /**

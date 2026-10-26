@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { CalendarCheckIcon, FileSignatureIcon, FlaskConicalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ import { formatDate } from "@/lib/format";
 import { useCompleteConsultation, useConsultation, useUpdateConsultation } from "@/hooks/use-clinical";
 import { useDataStore } from "@/store/data-store";
 import { useLiveData } from "@/lib/data-source";
+import { useLiveLabTests } from "@/hooks/use-clinic-admin";
 import type { ConsultationWithNames } from "@/services/clinical";
 import type { Consultation, Vitals } from "@/types";
 
@@ -93,17 +94,28 @@ export default function ConsultationWorkspacePage({ params }: { params: Promise<
   return <Workspace key={consultation.id} consultation={consultation} patient={patient} live={live} onChanged={() => refetch()} />;
 }
 
+/** Only an in-progress consultation shows the "Order a test..." box (so only then is the list needed). */
+const isEditableStatus = (c: ConsultationWithNames) => c.status === "in_progress";
+
 function Workspace({ consultation, patient, live, onChanged }: { consultation: ConsultationWithNames; patient: PatientHeader; live: boolean; onChanged: () => void }) {
   const router = useRouter();
   const updateConsultation = useUpdateConsultation();
   const completeConsultation = useCompleteConsultation();
   const [draft, setDraft] = useState<Draft>(() => draftFrom(consultation));
-  const [rxOpen, setRxOpen] = useState(false);
   const bmi = useMemo(() => computeBmi(draft.vitals), [draft.vitals]);
+  // Live: the clinic's lab test master (Clinic → Lab Tests); the built-in list if it can't be loaded.
+  const labTests = useLiveLabTests({ enabled: live && isEditableStatus(consultation) });
+  const labTestSuggestions = useMemo(
+    () => (live && labTests.data ? labTests.data.items.filter((t) => t.status === "active").map((t) => t.name) : [...LAB_REPORT_TYPES]),
+    [live, labTests.data]
+  );
 
   // Live: only the assigned doctor may edit or prescribe (the server enforces it; these just hide the controls).
   const isEditable = live ? Boolean(consultation.capabilities?.edit) : consultation.status === "in_progress";
   const canPrescribe = live ? Boolean(consultation.capabilities?.prescribe) : true;
+  // ?prescribe=1 (from "New Prescription" on the Prescriptions page) opens the form straight away.
+  const prescribeRequested = useSearchParams().get("prescribe") === "1";
+  const [rxOpen, setRxOpen] = useState(() => prescribeRequested && canPrescribe);
   const setVital = (key: keyof Vitals, value: string) => {
     const num = value === "" ? undefined : Number(value);
     setDraft((d) => ({ ...d, vitals: { ...d.vitals, [key]: num } }));
@@ -278,7 +290,7 @@ function Workspace({ consultation, patient, live, onChanged }: { consultation: C
             <CardHeader><CardTitle className="flex items-center gap-1.5"><FlaskConicalIcon className="h-4 w-4" /> Lab Tests</CardTitle></CardHeader>
             <CardContent>
               {isEditable ? (
-                <TagInput value={draft.labTestsOrdered} onChange={(v) => setDraft((d) => ({ ...d, labTestsOrdered: v }))} suggestions={[...LAB_REPORT_TYPES]} placeholder="Order a test..." />
+                <TagInput value={draft.labTestsOrdered} onChange={(v) => setDraft((d) => ({ ...d, labTestsOrdered: v }))} suggestions={labTestSuggestions} placeholder="Order a test..." />
               ) : (
                 <div className="flex flex-wrap gap-1.5">{draft.labTestsOrdered.map((t) => <Badge key={t} variant="outline">{t}</Badge>)}</div>
               )}

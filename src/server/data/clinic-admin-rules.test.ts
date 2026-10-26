@@ -83,8 +83,10 @@ describe("audit log", () => {
     expect(auditArea("auth.sign_out")).toBe("sign_in");
     expect(auditArea("expenses.insert")).toBe("billing");
     expect(auditArea("departments.update")).toBe("setup");
+    expect(auditArea("lab_test_types.insert")).toBe("setup");
+    expect(auditArea("member_permission_overrides.insert")).toBe("staff");
     expect(auditArea("weird")).toBe("other");
-    expect(auditActionPrefixes("setup").sort()).toEqual(["branches.", "clinics.", "departments."]);
+    expect(auditActionPrefixes("setup").sort()).toEqual(["branches.", "clinics.", "departments.", "lab_test_types."]);
     expect(auditActionPrefixes("sign_in")).toEqual(["auth."]);
   });
 });

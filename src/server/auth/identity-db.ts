@@ -39,10 +39,11 @@ export async function findUserAndPin(tx: TenantTx, authUserId: string): Promise<
 type MembershipsAndLinks = Pick<Identity, "memberships"> & Required<Pick<Identity, "doctorProfiles" | "patientLinks">>;
 
 /**
- * Memberships (with clinic, role and permission keys), active doctor profiles
- * and active patient links of `userId`, in one statement. Requires app.user_id
- * pinned to `userId` (findUserAndPin): RLS (memberships_read, clinics_read,
- * doctor_profiles_read, patients_read) exposes only this user's own rows.
+ * Memberships (with clinic, role and effective permission keys), active doctor
+ * profiles and active patient links of `userId`, in one statement. Requires
+ * app.user_id pinned to `userId` (findUserAndPin): RLS (memberships_read,
+ * clinics_read, member_permission_overrides_read, doctor_profiles_read,
+ * patients_read) exposes only this user's own rows.
  */
 export async function loadMembershipsAndLinks(tx: TenantTx, userId: string): Promise<MembershipsAndLinks> {
   const [row] = await tx.$queryRaw<{ memberships: MembershipRecord[]; doctorProfiles: { id: string; clinicId: string }[]; patientLinks: { patientId: string; clinicId: string }[] }[]>`
@@ -50,9 +51,15 @@ export async function loadMembershipsAndLinks(tx: TenantTx, userId: string): Pro
       (SELECT coalesce(json_agg(json_build_object(
                 'id', m.id, 'clinicId', m."clinicId", 'clinicName', c.name, 'clinicStatus', c.status,
                 'branchId', m."branchId", 'roleKey', r.key, 'status', m.status,
+                -- Effective permissions: the role's, minus this member's REVOKEs, plus their
+                -- GRANTs (member_permission_overrides) — the same rule as app.staff_can.
                 'permissions', (SELECT coalesce(json_agg(p.key), '[]'::json)
-                                FROM role_permissions rp JOIN permissions p ON p.id = rp."permissionId"
-                                WHERE rp."roleId" = r.id))), '[]'::json)
+                                FROM permissions p
+                                WHERE (EXISTS (SELECT 1 FROM role_permissions rp WHERE rp."roleId" = r.id AND rp."permissionId" = p.id)
+                                       AND NOT EXISTS (SELECT 1 FROM member_permission_overrides o
+                                                       WHERE o."membershipId" = m.id AND o."permissionId" = p.id AND o.effect = 'REVOKE'))
+                                   OR EXISTS (SELECT 1 FROM member_permission_overrides o
+                                              WHERE o."membershipId" = m.id AND o."permissionId" = p.id AND o.effect = 'GRANT')))), '[]'::json)
          FROM clinic_memberships m
          JOIN clinics c ON c.id = m."clinicId"
          JOIN roles r ON r.id = m."roleId"

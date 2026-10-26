@@ -3,6 +3,7 @@
 // browser client — no runtime code, no mock-store imports.
 
 import type { ArchiveReason, DocumentCategoryKey, LabReportStatusKey, LabValue } from "@/lib/documents";
+import type { UserRole } from "@/types";
 
 export interface SpecialtyOption {
   id: string;
@@ -495,6 +496,54 @@ export interface LiveDepartment {
 
 export interface DepartmentPage {
   items: LiveDepartment[];
+  canManage: boolean;
+}
+
+/** Someone holding a staff role in the clinic, as listed on Users & Roles. */
+export interface LiveClinicUser {
+  membershipId: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  /** Doctors only. */
+  specialtyName: string | null;
+  departmentName: string | null;
+  /** null: clinic-wide. */
+  branchId: string | null;
+  branchName: string | null;
+  status: "active" | "inactive";
+  joinedDate: string;
+  /** Permission keys added to / removed from the role's defaults for this person (administrators only; else empty). */
+  granted: string[];
+  revoked: string[];
+  canEditPermissions: boolean;
+  canChangeRole: boolean;
+}
+
+export interface ClinicUsersPage {
+  items: LiveClinicUser[];
+  /** Whether the viewer may change roles and permissions (clinic-wide administrators). */
+  canManage: boolean;
+  /** Roles a person can be moved between on this page. */
+  changeableRoles: UserRole[];
+  /** Each staff role's default permission keys. */
+  roleDefaults: Partial<Record<UserRole, string[]>>;
+  permissions: { key: string; name: string; module: string; description: string | null }[];
+}
+
+export type LabTestCategory = "pathology" | "radiology" | "cardiology" | "other";
+
+/** One test in the clinic's lab test master (what doctors order from a consultation). */
+export interface LiveLabTest {
+  id: string;
+  name: string;
+  category: LabTestCategory;
+  status: "active" | "inactive";
+}
+
+export interface LabTestPage {
+  items: LiveLabTest[];
   canManage: boolean;
 }
 

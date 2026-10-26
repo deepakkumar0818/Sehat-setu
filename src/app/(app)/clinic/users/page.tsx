@@ -21,8 +21,10 @@ import { useBranchesForClinic } from "@/hooks/use-tenant-branches";
 import { formatDate } from "@/lib/format";
 import { ROLE_LABELS } from "@/lib/permissions";
 import type { UserRole } from "@/types";
+import { useLiveData } from "@/lib/data-source";
+import { LiveClinicUsers } from "@/components/clinic-admin/live-clinic-users";
 
-export default function ClinicUsersPage() {
+function DemoClinicUsersPage() {
   const clinicId = useCurrentClinicId();
   const [search, setSearch] = useState("");
   const [role, setRole] = useState<UserRole | "all">("all");
@@ -124,4 +126,10 @@ export default function ClinicUsersPage() {
       <DoctorFormDialog open={addOpen === "doctor"} onOpenChange={(open) => setAddOpen(open ? "doctor" : null)} />
     </div>
   );
+}
+
+// Live staff app: the clinic's real users from the database (people are managed on /staff).
+// Demo mode keeps the in-browser sample users.
+export default function ClinicUsersPage() {
+  return useLiveData() ? <LiveClinicUsers /> : <DemoClinicUsersPage />;
 }

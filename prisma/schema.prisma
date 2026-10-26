@@ -41,6 +41,18 @@ enum RecordStatus {
   INACTIVE
 }
 
+enum PermissionEffect {
+  GRANT
+  REVOKE
+}
+
+enum LabTestCategory {
+  PATHOLOGY
+  RADIOLOGY
+  CARDIOLOGY
+  OTHER
+}
+
 enum UserStatus {
   ACTIVE
   INVITED
@@ -170,6 +182,7 @@ model Clinic {
 
   branches       Branch[]
   departments    Department[]
+  labTestTypes   LabTestType[]
   memberships    ClinicMembership[]
   doctorProfiles DoctorProfile[]
   doctorBranches DoctorBranch[]
@@ -259,6 +272,24 @@ model Department {
   @@map("departments")
 }
 
+/// A clinic's lab test master: the tests doctors order from a consultation.
+/// Names are unique per clinic ignoring case (lab_test_types_clinic_name_key,
+/// an expression index on lower("name"), defined in the migration only).
+model LabTestType {
+  id        String          @id @default(uuid()) @db.Uuid
+  clinicId  String          @db.Uuid
+  name      String
+  category  LabTestCategory @default(OTHER)
+  status    RecordStatus    @default(ACTIVE)
+  createdAt DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime        @updatedAt @db.Timestamptz(6)
+
+  clinic Clinic @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+
+  @@unique([clinicId, id])
+  @@map("lab_test_types")
+}
+
 // ---------------------------------------------------------------------------
 // Identity, roles & permissions
 // ---------------------------------------------------------------------------
@@ -338,6 +369,24 @@ model RolePermission {
 
   @@id([roleId, permissionId])
   @@map("role_permissions")
+}
+
+/// A per-member change to the role's default permissions: GRANT adds one,
+/// REVOKE removes one. Written only by app.set_member_permissions /
+/// app.change_member_role; read by app.staff_can and the session loader.
+/// Foreign keys (clinic, membership, permission, creator) are defined in the migration.
+model MemberPermissionOverride {
+  id              String           @id @default(uuid()) @db.Uuid
+  clinicId        String           @db.Uuid
+  membershipId    String           @db.Uuid
+  permissionId    String           @db.Uuid
+  effect          PermissionEffect
+  createdByUserId String           @db.Uuid
+  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
+
+  @@unique([membershipId, permissionId])
+  @@index([clinicId])
+  @@map("member_permission_overrides")
 }
 
 /// Grants a user a role within one clinic, optionally limited to one branch.

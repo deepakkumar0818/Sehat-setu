@@ -23,8 +23,13 @@ function createPrismaClient(): PrismaClient {
   // so a page firing several transactions on a cold or busy pool exceeded it
   // ("Unable to start a transaction in the given time"). connectionTimeoutMillis
   // still fails fast if the database is actually unreachable.
+  //
+  // idleTimeoutMillis: pg closes idle pooled connections after 10s by default,
+  // so the first click after any pause paid that ~0.7s TLS handshake again
+  // (once per parallel request). Idle connections to the pooler are cheap, so
+  // keep them for 5 minutes, with TCP keep-alive so the network doesn't drop them.
   return new PrismaClient({
-    adapter: new PrismaPg({ ...verifiedPgConfig(connectionString), max: 20, connectionTimeoutMillis: 10_000 }),
+    adapter: new PrismaPg({ ...verifiedPgConfig(connectionString), max: 20, connectionTimeoutMillis: 10_000, idleTimeoutMillis: 300_000, keepAlive: true }),
     transactionOptions: { maxWait: 10_000, timeout: 15_000 },
   });
 }

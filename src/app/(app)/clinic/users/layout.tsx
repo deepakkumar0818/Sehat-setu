@@ -1,9 +1,5 @@
-import { redirect } from "next/navigation";
-import { isSupabaseAuthEnabled } from "@/lib/auth/config";
-
-// This page lists the in-browser demo users. With Supabase Auth (live data) the
-// real directory and invitations are on /staff, so never render the demo list.
+// Live data: the page lists the clinic's real users from the database;
+// they are invited and managed on /staff. Access is checked by the /clinic layout.
 export default function Layout({ children }: { children: React.ReactNode }) {
-  if (isSupabaseAuthEnabled()) redirect("/staff");
   return children;
 }

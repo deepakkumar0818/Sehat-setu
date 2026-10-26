@@ -91,6 +91,7 @@ const adminNav: NavGroup[] = [
     items: [
       { label: "Branches", href: "/clinic/branches", icon: Building2 },
       { label: "Departments", href: "/clinic/departments", icon: Layers },
+      { label: "Lab Tests", href: "/clinic/lab-tests", icon: FlaskConical },
       { label: "Specialties", href: "/clinic/specialties", icon: Stethoscope },
       { label: "Users & Roles", href: "/clinic/users", icon: ShieldCheck },
     ],

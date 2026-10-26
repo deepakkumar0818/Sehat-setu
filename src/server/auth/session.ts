@@ -28,13 +28,47 @@ import {
 /** Cookie holding the user's preferred clinic. A hint only — always re-validated against memberships. */
 export const ACTIVE_CLINIC_COOKIE = "sehat_active_clinic";
 
-/** Asks the Supabase Auth server who the session belongs to (validates the JWT; never trusts cookie contents alone). */
+// Auth-server answers per session, so a page firing several API calls at once
+// (each its own request) doesn't wait on the Auth server for each one: that
+// round-trip is ~0.1s warm and >1s on a fresh connection. Every request still
+// verifies the session token's signature and expiry locally (getClaims: ES256
+// against Supabase's public key, which auth-js caches), and only a token whose
+// session the Auth server confirmed within SESSION_RECHECK_MS is served from
+// here. A server-side sign-out (or a revoked session) therefore takes effect
+// within that window; signing out through /auth/signout forgets it at once.
+const SESSION_RECHECK_MS = 60_000;
+const verifiedSessions = new Map<string, { user: VerifiedAuthUser; until: number }>();
+
+function rememberSession(key: string, user: VerifiedAuthUser, tokenExpiresAt: number): void {
+  const now = Date.now();
+  if (verifiedSessions.size >= 1000) {
+    for (const [k, v] of verifiedSessions) if (v.until <= now) verifiedSessions.delete(k);
+    if (verifiedSessions.size >= 1000) verifiedSessions.clear();
+  }
+  verifiedSessions.set(key, { user, until: Math.min(now + SESSION_RECHECK_MS, tokenExpiresAt * 1000) });
+}
+
+/** Drop the remembered sessions of one Supabase user (called on sign-out). */
+export function forgetVerifiedSessions(authUserId: string): void {
+  for (const key of verifiedSessions.keys()) if (key.startsWith(`${authUserId}:`)) verifiedSessions.delete(key);
+}
+
+/** Who the session belongs to: the JWT is verified on every call, and confirmed with the Supabase Auth server at least once a minute (never trusts cookie contents alone). */
 async function getAuthUser(): Promise<AuthUserLookup> {
   const supabase = await createSupabaseServerClient();
+  const { data: verified } = await supabase.auth.getClaims();
+  const claims = verified?.claims;
+  const key = claims?.sub && claims.session_id ? `${claims.sub}:${claims.session_id}` : null;
+  const known = key ? verifiedSessions.get(key) : undefined;
+  if (known && known.until > Date.now()) return { status: "ok", user: known.user };
+
   const { data, error } = await supabase.auth.getUser();
   if (data.user) {
-    return { status: "ok", user: { id: data.user.id, email: data.user.email ?? null, emailConfirmed: Boolean(data.user.email_confirmed_at), metadata: data.user.user_metadata ?? {} } };
+    const user = { id: data.user.id, email: data.user.email ?? null, emailConfirmed: Boolean(data.user.email_confirmed_at), metadata: data.user.user_metadata ?? {} };
+    if (key && claims && claims.sub === user.id) rememberSession(key, user, claims.exp);
+    return { status: "ok", user };
   }
+  if (key) verifiedSessions.delete(key);
   if (error?.name === "AuthRetryableFetchError") throw new AuthError("AUTH_UNAVAILABLE");
   return { status: (await hasSupabaseSessionCookie()) ? "expired" : "none" };
 }

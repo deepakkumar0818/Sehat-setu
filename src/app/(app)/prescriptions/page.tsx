@@ -13,6 +13,8 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { PrescriptionBuilderDialog } from "@/components/prescriptions/prescription-builder-dialog";
+import { NewLivePrescriptionDialog } from "@/components/prescriptions/new-live-prescription-dialog";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import { formatDate } from "@/lib/format";
 import { usePrescriptions } from "@/hooks/use-clinical";
 import { useLiveData } from "@/lib/data-source";
@@ -21,8 +23,11 @@ import type { PrescriptionWithNames } from "@/services/clinical";
 
 export default function PrescriptionsPage() {
   const router = useRouter();
-  // Live: a prescription belongs to a consultation, so it's written from the consultation workspace.
+  // Live: a prescription belongs to a consultation, so it's written from the consultation workspace;
+  // "New Prescription" (doctors only) picks one of their consultations and opens the form there.
   const live = useLiveData();
+  const user = useCurrentUser();
+  const canCreate = !live || user?.role === "doctor";
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<PrescriptionStatus | "all">("all");
   const [page, setPage] = useState(1);
@@ -44,7 +49,7 @@ export default function PrescriptionsPage() {
       <PageHeader
         title="Prescriptions"
         description="Digital prescriptions issued across your clinic."
-        actions={live ? undefined : <Button onClick={() => setDialogOpen(true)}><PlusIcon /> New Prescription</Button>}
+        actions={canCreate ? <Button onClick={() => setDialogOpen(true)}><PlusIcon /> New Prescription</Button> : undefined}
       />
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -76,7 +81,7 @@ export default function PrescriptionsPage() {
                 icon={FileSignatureIcon}
                 title="No prescriptions found"
                 description={live ? "Prescriptions are written from a consultation." : "Try changing your filters or create a new prescription."}
-                action={live ? undefined : <Button onClick={() => setDialogOpen(true)}><PlusIcon /> New Prescription</Button>}
+                action={canCreate ? <Button onClick={() => setDialogOpen(true)}><PlusIcon /> New Prescription</Button> : undefined}
               />
             }
           />
@@ -84,6 +89,7 @@ export default function PrescriptionsPage() {
         </div>
       )}
 
+      {live && dialogOpen && <NewLivePrescriptionDialog open onOpenChange={setDialogOpen} />}
       {!live && <PrescriptionBuilderDialog open={dialogOpen} onOpenChange={setDialogOpen} onCreated={(id) => router.push(`/prescriptions/${id}`)} />}
     </div>
   );

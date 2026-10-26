@@ -99,6 +99,7 @@ export function LiveSettings() {
             { href: "/doctor-roster", label: "Doctors" },
             { href: "/clinic/branches", label: "Branches" },
             { href: "/clinic/departments", label: "Departments" },
+            { href: "/clinic/lab-tests", label: "Lab tests" },
             { href: "/audit-log", label: "Audit log" },
             { href: "/subscription", label: "Plan & usage" },
           ].map((item) => (
