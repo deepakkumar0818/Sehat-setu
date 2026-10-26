@@ -561,6 +561,14 @@ export interface LiveSpecialty {
   description: string | null;
   doctorCount: number;
   departmentCount: number;
+  /** This clinic's own specialty (editable by its administrators); false = the shared catalogue. */
+  custom: boolean;
+}
+
+export interface SpecialtyUsagePage {
+  items: LiveSpecialty[];
+  /** Whether the viewer may add and rename the clinic's own specialties. */
+  canManage: boolean;
 }
 
 export interface ClinicProfile {

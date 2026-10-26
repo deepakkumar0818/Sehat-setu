@@ -46,6 +46,11 @@ export function nextFreeCode(base: string, taken: ReadonlySet<string>): string {
   throw new Error("no free branch code");
 }
 
+// --- Clinic specialties ----------------------------------------------------------
+
+export const specialtyInputSchema = z.object({ name: text(80), description: optionalText(300) });
+export const specialtyPatchSchema = specialtyInputSchema.partial().strict().refine((v) => Object.keys(v).length > 0, "Nothing to change");
+
 // --- Lab test master -----------------------------------------------------------
 
 export const LAB_TEST_CATEGORIES = ["pathology", "radiology", "cardiology", "other"] as const;
@@ -131,6 +136,7 @@ const TABLE_AREA: Record<string, AuditArea> = {
   branches: "setup",
   departments: "setup",
   lab_test_types: "setup",
+  specialties: "setup",
   clinics: "setup",
 };
 
@@ -175,6 +181,7 @@ const NOUN: Record<string, string> = {
   branches: "a branch",
   departments: "a department",
   lab_test_types: "a lab test",
+  specialties: "a specialty",
   clinics: "the clinic profile",
 };
 

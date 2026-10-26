@@ -64,6 +64,7 @@ import type {
   LabTestPage,
   LiveLabTest,
   ClinicUsersPage,
+  SpecialtyUsagePage,
   ExpenseInput,
   ExpensePage,
   LiveDepartment,
@@ -452,7 +453,9 @@ export const liveApi = {
   },
   specialties: {
     list: () => apiGet<{ items: SpecialtyOption[] }>("/api/v1/specialties"),
-    usage: () => apiGet<{ items: LiveSpecialty[] }>("/api/v1/specialties/usage"),
+    usage: () => apiGet<SpecialtyUsagePage>("/api/v1/specialties/usage"),
+    create: (input: { name: string; description: string | null }) => apiPost<LiveSpecialty>("/api/v1/specialties", input),
+    update: (id: string, patch: { name?: string; description?: string | null }) => apiPatch<LiveSpecialty>(`/api/v1/specialties/${encodeURIComponent(id)}`, patch),
   },
   staff: {
     list: (params: ListStaffParams) => apiGet<PagedResult<StaffMember> & { capabilities: StaffCapabilities }>("/api/v1/staff", params),

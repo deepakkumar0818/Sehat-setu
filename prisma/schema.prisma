@@ -236,9 +236,14 @@ model Branch {
   @@map("branches")
 }
 
+/// The shared catalogue (clinicId null) plus each clinic's own specialties.
+/// Names are unique among shared ones and within a clinic, ignoring case
+/// (partial expression indexes defined in 20261101000200_clinic_specialties).
 model Specialty {
   id          String   @id @default(uuid()) @db.Uuid
-  name        String   @unique
+  /// Null: shared by every clinic. Set: that clinic's own (visible to it only).
+  clinicId    String?  @db.Uuid
+  name        String
   description String?
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @db.Timestamptz(6)

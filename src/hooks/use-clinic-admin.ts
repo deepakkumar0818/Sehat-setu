@@ -127,6 +127,27 @@ export function useLiveSpecialtyUsage() {
   return useQuery({ queryKey: keys.specialties, queryFn: liveApi.specialties.usage });
 }
 
+/** After adding/renaming a specialty: this page and every specialty picker (["specialties", …]). */
+function useInvalidateSpecialties() {
+  const qc = useQueryClient();
+  return () => {
+    for (const key of [["specialties"], keys.departments, keys.audit]) qc.invalidateQueries({ queryKey: key });
+  };
+}
+
+export function useCreateLiveSpecialty() {
+  const invalidate = useInvalidateSpecialties();
+  return useMutation({ mutationFn: (input: { name: string; description: string | null }) => liveApi.specialties.create(input), onSuccess: invalidate });
+}
+
+export function useUpdateLiveSpecialty() {
+  const invalidate = useInvalidateSpecialties();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: { name?: string; description?: string | null } }) => liveApi.specialties.update(id, patch),
+    onSuccess: invalidate,
+  });
+}
+
 export function useClinicProfile() {
   return useQuery({ queryKey: keys.clinic, queryFn: liveApi.clinic.get });
 }

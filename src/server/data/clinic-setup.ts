@@ -3,7 +3,7 @@ import { AuthError } from "@/server/auth/errors";
 import { hasAnyPermission, requirePermission, type TenantContext } from "@/server/auth/authorize";
 import { DataError } from "@/server/api/errors";
 import type { TenantTx } from "@/server/db/tenant";
-import type { ClinicProfile, DepartmentPage, LiveDepartment, LiveSpecialty } from "@/lib/live-types";
+import type { ClinicProfile, DepartmentPage, LiveDepartment, LiveSpecialty, SpecialtyUsagePage } from "@/lib/live-types";
 import type { Branch } from "@/types";
 import {
   branchCodeFromName,
@@ -14,11 +14,14 @@ import {
   departmentPatchSchema,
   isUuid,
   nextFreeCode,
+  specialtyInputSchema,
+  specialtyPatchSchema,
 } from "./clinic-admin-rules";
+import { errorText } from "./document-rules";
 import { runScoped } from "./scope";
 
-// Clinic setup for administrators: branches, departments, the specialty
-// catalogue (read-only here) and the clinic profile. Every write is also
+// Clinic setup for administrators: branches, departments, specialties (the
+// shared catalogue plus the clinic's own) and the clinic profile. Every write is also
 // checked by RLS (branches_*, departments_*, clinics_update policies) and
 // audited by row-change triggers.
 
@@ -26,6 +29,7 @@ export const BRANCH_CREATE = ["branch.create"] as const;
 export const BRANCH_UPDATE = ["branch.update"] as const;
 export const DEPARTMENT_MANAGE = ["clinic.settings.manage", "branch.update"] as const;
 export const CLINIC_EDIT = ["clinic.update", "clinic.settings.manage"] as const;
+export const SPECIALTY_MANAGE = ["clinic.settings.manage"] as const;
 
 type BranchRow = { id: string; clinicId: string; name: string; code: string; city: string; addressLine: string; phone: string; email: string | null; isHeadOffice: boolean; status: "ACTIVE" | "INACTIVE" };
 
@@ -220,21 +224,84 @@ export async function updateDepartment(ctx: TenantContext, id: string, raw: unkn
   });
 }
 
-// --- Specialties (shared catalogue, with this clinic's usage) -------------------
+// --- Specialties (shared catalogue + this clinic's own, with usage) --------------
 
-export async function listSpecialtyUsage(ctx: TenantContext, db?: TenantTx): Promise<{ items: LiveSpecialty[] }> {
+/** Adding/renaming the clinic's own specialties: clinic-wide administrators (as RLS specialties_insert/update require). */
+const canManageSpecialties = (ctx: TenantContext) => hasAnyPermission(ctx, SPECIALTY_MANAGE) && !ctx.branchId;
+
+export async function listSpecialtyUsage(ctx: TenantContext, db?: TenantTx): Promise<SpecialtyUsagePage> {
   return runScoped(ctx, db, async (tx) => {
+    // RLS: the shared catalogue and this clinic's own specialties only.
     const [specialties, doctors, departments] = await Promise.all([
-      tx.specialty.findMany({ orderBy: [{ name: "asc" }, { id: "asc" }], select: { id: true, name: true, description: true } }),
+      tx.specialty.findMany({ orderBy: [{ name: "asc" }, { id: "asc" }], select: { id: true, name: true, description: true, clinicId: true } }),
       tx.doctorProfile.groupBy({ by: ["specialtyId"], where: { clinicId: ctx.clinicId, status: "ACTIVE" }, _count: { _all: true } }),
       tx.department.groupBy({ by: ["specialtyId"], where: { clinicId: ctx.clinicId, status: "ACTIVE", specialtyId: { not: null } }, _count: { _all: true } }),
     ]);
     const doctorCount = new Map(doctors.map((d) => [d.specialtyId, d._count._all]));
     const departmentCount = new Map(departments.map((d) => [d.specialtyId, d._count._all]));
     return {
-      items: specialties.map((s) => ({ ...s, doctorCount: doctorCount.get(s.id) ?? 0, departmentCount: departmentCount.get(s.id) ?? 0 })),
+      items: specialties.map(({ clinicId, ...s }) => ({ ...s, custom: clinicId !== null, doctorCount: doctorCount.get(s.id) ?? 0, departmentCount: departmentCount.get(s.id) ?? 0 })),
+      canManage: canManageSpecialties(ctx),
     };
   });
+}
+
+async function checkSpecialtyName(tx: TenantTx, name: string, exceptId?: string) {
+  // Visible specialties (RLS): the shared ones and this clinic's own.
+  const clash = await tx.specialty.findFirst({ where: { name: { equals: name, mode: "insensitive" }, ...(exceptId ? { id: { not: exceptId } } : {}) }, select: { id: true } });
+  if (clash) throw new DataError("DUPLICATE", `${name} is already in the list.`);
+}
+
+/** Two admins adding the same name at once, or a name clashing with the shared list: the database decides. */
+function mapSpecialtyWriteError(err: unknown, name: string | undefined): never {
+  const text = errorText(err);
+  if (name && (/specialty: SHARED_NAME/.test(text) || /\b23505\b|P2002/.test(text))) throw new DataError("DUPLICATE", `${name} is already in the list.`);
+  throw err;
+}
+
+const toSpecialty = (s: { id: string; name: string; description: string | null }): LiveSpecialty => ({ ...s, custom: true, doctorCount: 0, departmentCount: 0 });
+
+/** Add one of the clinic's own specialties. */
+export async function createSpecialty(ctx: TenantContext, raw: unknown, db?: TenantTx): Promise<LiveSpecialty> {
+  requirePermission(ctx, SPECIALTY_MANAGE);
+  if (ctx.branchId) throw new AuthError("FORBIDDEN");
+  const input = specialtyInputSchema.parse(raw);
+  try {
+    return await runScoped(ctx, db, async (tx) => {
+      await checkSpecialtyName(tx, input.name);
+      // Raw INSERT naming only the granted columns (Prisma's create also sends createdAt).
+      const [row] = await tx.$queryRaw<{ id: string; name: string; description: string | null }[]>`
+        INSERT INTO specialties (id, "clinicId", name, description, "updatedAt")
+        VALUES (gen_random_uuid(), ${ctx.clinicId}::uuid, ${input.name}, ${input.description}, now())
+        RETURNING id::text AS id, name, description`;
+      return toSpecialty(row);
+    });
+  } catch (err) {
+    mapSpecialtyWriteError(err, input.name);
+  }
+}
+
+/** Rename or describe one of the clinic's own specialties (shared ones can't be changed). */
+export async function updateSpecialty(ctx: TenantContext, id: string, raw: unknown, db?: TenantTx): Promise<LiveSpecialty> {
+  requirePermission(ctx, SPECIALTY_MANAGE);
+  if (ctx.branchId) throw new AuthError("FORBIDDEN");
+  if (!isUuid(id)) throw new AuthError("NOT_FOUND");
+  const patch = specialtyPatchSchema.parse(raw);
+  try {
+    return await runScoped(ctx, db, async (tx) => {
+      const own = await tx.specialty.findFirst({ where: { id, clinicId: ctx.clinicId }, select: { id: true, name: true } });
+      if (!own) throw new AuthError("NOT_FOUND");
+      if (patch.name && patch.name.toLowerCase() !== own.name.toLowerCase()) await checkSpecialtyName(tx, patch.name, id);
+      const row = await tx.specialty.update({
+        where: { id },
+        data: { ...(patch.name !== undefined && { name: patch.name }), ...(patch.description !== undefined && { description: patch.description }) },
+        select: { id: true, name: true, description: true },
+      });
+      return toSpecialty(row);
+    });
+  } catch (err) {
+    mapSpecialtyWriteError(err, patch.name);
+  }
 }
 
 // --- Clinic profile --------------------------------------------------------------

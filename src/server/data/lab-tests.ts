@@ -5,6 +5,7 @@ import { DataError } from "@/server/api/errors";
 import type { TenantTx } from "@/server/db/tenant";
 import type { LabTestCategory, LabTestPage, LiveLabTest } from "@/lib/live-types";
 import { isUuid, labTestInputSchema, labTestPatchSchema } from "./clinic-admin-rules";
+import { errorText } from "./document-rules";
 import { runScoped } from "./scope";
 
 // The clinic's lab test master (lab_test_types): every staff member reads it
@@ -33,7 +34,9 @@ function requireManage(ctx: TenantContext) {
   if (ctx.branchId) throw new AuthError("FORBIDDEN");
 }
 
-const isUniqueViolation = (err: unknown) => typeof err === "object" && err !== null && (err as { code?: string }).code === "P2002";
+// P2002 from Prisma model writes; SQLSTATE 23505 from the raw INSERT below.
+const isUniqueViolation = (err: unknown) =>
+  (typeof err === "object" && err !== null && (err as { code?: string }).code === "P2002") || /23505/.test(errorText(err));
 const duplicate = (name: string) => new DataError("DUPLICATE", `${name} is already in the list.`);
 
 export async function listLabTests(ctx: TenantContext, db?: TenantTx): Promise<LabTestPage> {
@@ -61,10 +64,12 @@ export async function createLabTest(ctx: TenantContext, raw: unknown, db?: Tenan
   try {
     return await runScoped(ctx, db, async (tx) => {
       await checkName(ctx, tx, input.name);
-      const row = await tx.labTestType.create({
-        data: { clinicId: ctx.clinicId, name: input.name, category: toDbCategory(input.category) },
-        select: labTestSelect,
-      });
+      // Raw INSERT naming only the granted columns: Prisma's create also sends
+      // status/createdAt, which the app role may not set (column-level grants).
+      const [row] = await tx.$queryRaw<LabTestRow[]>`
+        INSERT INTO lab_test_types ("clinicId", "name", "category", "updatedAt")
+        VALUES (${ctx.clinicId}::uuid, ${input.name}, ${toDbCategory(input.category)}::"LabTestCategory", now())
+        RETURNING id::text AS id, name, category::text AS category, status::text AS status`;
       return toLabTest(row);
     });
   } catch (err) {
