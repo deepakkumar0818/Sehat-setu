@@ -29,7 +29,7 @@ import { formatRelativeTime } from "@/lib/format";
 import { useRemoveStaff, useStaff, useUpdateStaffStatus } from "@/hooks/use-people";
 import { useBranches } from "@/hooks/use-branches";
 import type { StaffMember, StaffRole } from "@/types";
-import type { StaffCapabilities } from "@/lib/live-types";
+import { INVITABLE_ROLES, type StaffCapabilities } from "@/lib/live-types";
 import { useLiveData } from "@/lib/data-source";
 import { formatPhone } from "@/lib/phone";
 
@@ -56,7 +56,10 @@ function StaffPageContent() {
   const [branchId, setBranchId] = useState("all");
   const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [inviteOpen, setInviteOpen] = useState(false);
+  // ?invite=NURSE (etc.): the dashboard's "Add Nurse" shortcuts open the invitation with that role.
+  // The role applies to that one invitation; "Invite staff" afterwards lets them choose again.
+  const [inviteRole, setInviteRole] = useState(() => INVITABLE_ROLES.find((r) => r === searchParams.get("invite") && r !== "DOCTOR"));
+  const [inviteOpen, setInviteOpen] = useState(Boolean(inviteRole));
   const [matrixRole, setMatrixRole] = useState<StaffRole>("receptionist");
 
   const { data, isLoading, isError, error, refetch } = useStaff({ search, role, branchId, page, pageSize: 10 });
@@ -230,7 +233,15 @@ function StaffPageContent() {
 
       {/* Demo only (renders nothing with live data). */}
       <StaffFormDialog open={dialogOpen} onOpenChange={setDialogOpen} />
-      {live && capabilities?.canInvite && capabilities.invitationsReady && <InviteStaffDialog open={inviteOpen} onOpenChange={setInviteOpen} />}
+      {live && capabilities?.canInvite && capabilities.invitationsReady && <InviteStaffDialog
+          key={inviteRole ?? "any"}
+          open={inviteOpen}
+          onOpenChange={(open) => {
+            setInviteOpen(open);
+            if (!open) setInviteRole(undefined);
+          }}
+          role={inviteRole}
+        />}
       {live && editingPhone && <EditPhoneDialog key={editingPhone.id} member={editingPhone} onOpenChange={(open) => !open && setEditingPhone(null)} />}
       {live && editing && <EditStaffDialog key={editing.id} member={editing} onOpenChange={(open) => !open && setEditing(null)} />}
       <ConfirmDialog

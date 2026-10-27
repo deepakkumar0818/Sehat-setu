@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { LetterheadView } from "@/components/shared/clinic-letterhead";
 import { PageHeader } from "@/components/shared/page-header";
 import { ClinicJoinLink } from "@/components/shared/clinic-join-link";
+import { MyProfileCard } from "@/components/clinic-admin/my-profile-card";
 import { QueryError } from "@/components/shared/query-error";
 import { useClinicProfile, useClinicSettings, useUpdateClinicProfile, useUpdateClinicSettings } from "@/hooks/use-clinic-admin";
 import { useCurrentUser } from "@/hooks/use-current-user";
@@ -636,10 +637,12 @@ function AccountCards() {
   const user = useCurrentUser();
   return (
     <>
+      <MyProfileCard />
+
       <Card>
         <CardHeader>
-          <CardTitle>Your account</CardTitle>
-          <CardDescription>{user ? `Signed in as ${user.name} (${user.email}).` : "Your sign-in details."}</CardDescription>
+          <CardTitle>Sign-in &amp; security</CardTitle>
+          <CardDescription>{user ? `Signed in as ${user.email}.` : "Your sign-in details."}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           <Button asChild variant="outline"><Link href="/auth/set-password">Change password</Link></Button>

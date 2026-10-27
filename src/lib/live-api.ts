@@ -25,6 +25,7 @@ import type {
   InvitationPage,
   InvitationResult,
   MyInvitation,
+  MyProfile,
   NotificationPage,
   SpecialtyOption,
   StaffCapabilities,
@@ -307,6 +308,9 @@ export const liveApi = {
     /** The current password is checked on the server before the new one is saved; other devices are signed out. */
     changePassword: (input: { currentPassword: string; newPassword: string }) =>
       apiPost<{ ok: true; otherSessionsSignedOut: boolean }>("/api/v1/me/password", input),
+    /** Your own details in this clinic (Settings → Account). */
+    profile: () => apiGet<MyProfile>("/api/v1/me/profile"),
+    updateProfile: (patch: { name?: string; phone?: string }) => apiPatch<MyProfile>("/api/v1/me/profile", patch),
   },
   platform: {
     overview: () => apiGet<PlatformOverview>("/api/v1/platform/clinics"),

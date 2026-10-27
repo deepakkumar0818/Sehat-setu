@@ -25,6 +25,19 @@ export interface StaffCapabilities {
   canRemove: boolean;
 }
 
+/** The signed-in member's own details (Settings → Account). */
+export interface MyProfile {
+  name: string;
+  email: string;
+  phone: string;
+  /** Role keys in this clinic, e.g. ["ADMINISTRATOR"]. */
+  roles: string[];
+  branchName: string | null;
+  clinicName: string;
+  /** Administrators may edit their own name and phone (the same database checks as for anyone else). */
+  canEdit: boolean;
+}
+
 // --- Notifications -----------------------------------------------------------
 
 export type NotificationTypeKey =

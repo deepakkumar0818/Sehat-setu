@@ -2,6 +2,8 @@ import "server-only";
 import { withTenantDb, type TenantTx } from "@/server/db/tenant";
 import { appointmentScopeFilter, hasAnyPermission, type TenantContext } from "@/server/auth/authorize";
 import { istDayKey, istDayRange, istMonthStart, istTodayKey } from "@/lib/ist";
+import { staffRoutePermissions } from "@/lib/auth/routes";
+import { ageFrom, avatarColorFor } from "./mappers";
 
 // Clinic dashboard data, read from PostgreSQL for one verified TenantContext.
 // Every query (1) runs inside withTenantDb, so RLS scopes it to the caller's
@@ -22,6 +24,54 @@ export interface DashboardAppointment {
   status: string;
 }
 
+export interface DashboardPatient {
+  id: string;
+  name: string;
+  patientNumber: string;
+  age: number;
+  gender: string;
+  avatarColor: string;
+  /** yyyy-MM-dd (IST) of their last completed visit, or null. */
+  lastVisit: string | null;
+  /** Their latest appointment's status (lower-case), or "active"/"inactive" when they have none. */
+  status: string;
+}
+
+export interface DashboardPerson {
+  id: string;
+  name: string;
+  /** Specialty for doctors, role label key for staff. */
+  detail: string;
+  status: "active" | "inactive";
+  avatarColor: string;
+}
+
+export interface DashboardTeamGroup {
+  items: DashboardPerson[];
+  total: number;
+}
+
+/**
+ * Shortcuts the viewer may use — each one only when they hold the permission
+ * AND may open the page it leads to (the server re-checks every action).
+ */
+export type QuickActionKey =
+  | "add_patient"
+  | "book_appointment"
+  | "waiting_room"
+  | "booking_requests"
+  | "add_doctor"
+  | "add_receptionist"
+  | "add_nurse"
+  | "consultations"
+  | "prescriptions"
+  | "upload_report"
+  | "billing"
+  | "expenses"
+  | "add_branch"
+  | "patient_link"
+  | "analytics";
+
 export interface DashboardData {
   clinicName: string;
   branchName: string | null;
@@ -29,7 +79,27 @@ export interface DashboardData {
   /** null when the user's role can't see patients. */
   totalPatients: number | null;
   activeDoctors: number;
-  today: { total: number; waiting: number; completed: number; online: number };
+  /** Suspended doctors (shown under the active count). */
+  inactiveDoctors: number;
+  /** Patients registered before this month: the base for "vs last month". */
+  patientsAtMonthStart: number | null;
+  today: { total: number; waiting: number; completed: number; online: number; upcoming: number };
+  /** Patients' online booking requests awaiting reception; null without appointment.update. */
+  pendingRequests: number | null;
+  /** The next appointments from now (today and later). */
+  upcomingAppointments: DashboardAppointment[];
+  /** null when the user's role can't see patients. */
+  recentPatients: DashboardPatient[] | null;
+  /** The clinic directory: doctors for every staff member; the staff groups need staff/user permissions. */
+  team: {
+    doctors: DashboardTeamGroup;
+    nurses: DashboardTeamGroup | null;
+    receptionists: DashboardTeamGroup | null;
+    management: DashboardTeamGroup | null;
+  } | null;
+  quickActions: QuickActionKey[];
+  /** For the "Patient link" shortcut (clinic administrators only): the clinic code in /join/<CODE>. */
+  clinicCode: string | null;
   upcomingNext14Days: number;
   statusBreakdown: { status: string; count: number }[];
   todaysAppointments: DashboardAppointment[];
@@ -45,6 +115,34 @@ export interface DashboardData {
 }
 
 const PATIENT_VIEW = ["patient.view", "patient.basic_info.view", "assigned_patients.view"];
+const STAFF_VIEW = ["staff.view", "staff.manage", "user.view"];
+const TEAM_SIZE = 4;
+
+/** Each shortcut: the permissions it needs (any one) and the page it opens. */
+const QUICK_ACTIONS: { key: QuickActionKey; anyOf: readonly string[]; allOf?: readonly string[]; path: string }[] = [
+  { key: "add_patient", anyOf: ["patient.create"], path: "/patients" },
+  { key: "book_appointment", anyOf: ["appointment.create"], path: "/appointments" },
+  { key: "booking_requests", anyOf: ["appointment.update"], path: "/appointments" },
+  { key: "waiting_room", anyOf: ["checkin.manage", "appointment.view", "own_appointments.view"], path: "/waiting-room" },
+  { key: "consultations", anyOf: ["medical_record.view", "patient.medical_record.view"], path: "/consultations" },
+  { key: "prescriptions", anyOf: ["prescription.manage", "prescription.view"], path: "/prescriptions" },
+  { key: "upload_report", anyOf: ["lab_report.upload", "lab.manage"], path: "/reports" },
+  { key: "add_doctor", anyOf: ["user.create"], allOf: ["doctor.manage"], path: "/doctor-roster" },
+  { key: "add_receptionist", anyOf: ["user.create"], path: "/staff" },
+  { key: "add_nurse", anyOf: ["user.create"], path: "/staff" },
+  { key: "billing", anyOf: ["billing.manage", "invoice.create", "billing.view"], path: "/billing" },
+  { key: "expenses", anyOf: ["billing.manage"], path: "/expenses" },
+  { key: "analytics", anyOf: ["reports.view", "financial_reports.view"], path: "/analytics" },
+  { key: "add_branch", anyOf: ["branch.create"], path: "/clinic/branches" },
+  { key: "patient_link", anyOf: ["clinic.settings.manage"], path: "/settings" },
+];
+
+export function quickActionsFor(ctx: Pick<TenantContext, "permissions">): QuickActionKey[] {
+  return QUICK_ACTIONS.filter((a) => {
+    const route = staffRoutePermissions(a.path);
+    return route !== undefined && hasAnyPermission(ctx, route) && hasAnyPermission(ctx, a.anyOf) && (a.allOf ?? []).every((k) => ctx.permissions.has(k));
+  }).map((a) => a.key);
+}
 const BILLING_VIEW = ["billing.view", "invoice.view", "billing.manage"];
 // Pending and declined patient requests aren't appointments yet: excluded from every list and count here.
 const STATUS_ORDER = ["SCHEDULED", "CONFIRMED", "CHECKED_IN", "IN_CONSULTATION", "COMPLETED", "CANCELLED", "NO_SHOW"];
@@ -90,6 +188,9 @@ export async function getDashboardData(ctx: TenantContext, now: Date = new Date(
   const windowEnd = istDayRange(now, 14).end;
   const canSeePatients = hasAnyPermission(ctx, PATIENT_VIEW);
   const canSeeBilling = hasAnyPermission(ctx, BILLING_VIEW);
+  const canSeeStaff = hasAnyPermission(ctx, STAFF_VIEW);
+  const canReviewRequests = hasAnyPermission(ctx, ["appointment.update"]);
+  const monthStart = istMonthStart(now);
   const apptSelect = { id: true, startsAt: true, type: true, status: true, patientId: true, doctorId: true, branchId: true } as const;
 
   return withTenantDb(ctx, async (tx) => {
@@ -112,15 +213,79 @@ export async function getDashboardData(ctx: TenantContext, now: Date = new Date(
       tx.appointment.count({ where: { ...apptScope, startsAt: { gte: today.end, lt: windowEnd }, status: { in: ["SCHEDULED", "CONFIRMED"] } } }),
       tx.appointment.groupBy({ by: ["status"], where: { ...apptScope, startsAt: { gte: windowStart, lt: windowEnd }, status: NOT_REQUESTS }, _count: { _all: true } }),
     ]);
+    const patientScope = { clinicId: ctx.clinicId, status: { not: "ARCHIVED" as const }, ...(own ? { appointments: { some: { doctorId: ctx.doctorId! } } } : {}) };
+    const [inactiveDoctors, patientsAtMonthStart, pendingRequests, upcoming, recentPatientRows, doctorRows, doctorTotal, staffRows] = await Promise.all([
+      tx.doctorProfile.count({ where: { clinicId: ctx.clinicId, status: "INACTIVE", ...(ctx.branchId ? { branches: { some: { branchId: ctx.branchId } } } : {}) } }),
+      canSeePatients ? tx.patient.count({ where: { ...patientScope, createdAt: { lt: monthStart } } }) : null,
+      canReviewRequests ? tx.appointment.count({ where: { ...apptScope, status: "PENDING_APPROVAL", startsAt: { gte: now } } }) : null,
+      tx.appointment.findMany({
+        where: { ...apptScope, startsAt: { gte: now, lt: windowEnd }, status: { in: ["SCHEDULED", "CONFIRMED", "CHECKED_IN", "IN_CONSULTATION"] } },
+        orderBy: { startsAt: "asc" },
+        take: 6,
+        select: apptSelect,
+      }),
+      canSeePatients
+        ? tx.patient.findMany({
+            where: patientScope,
+            orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+            take: 5,
+            select: {
+              id: true, name: true, patientNumber: true, dateOfBirth: true, gender: true, status: true,
+              appointments: { where: { status: NOT_REQUESTS, ...doctorFilter }, orderBy: { startsAt: "desc" }, take: 1, select: { status: true } },
+            },
+          })
+        : [],
+      tx.doctorProfile.findMany({
+        where: { clinicId: ctx.clinicId, ...(ctx.branchId ? { branches: { some: { branchId: ctx.branchId } } } : {}) },
+        orderBy: [{ status: "asc" }, { user: { name: "asc" } }],
+        take: TEAM_SIZE,
+        select: { id: true, status: true, user: { select: { name: true } }, specialty: { select: { name: true } } },
+      }),
+      tx.doctorProfile.count({ where: { clinicId: ctx.clinicId, ...(ctx.branchId ? { branches: { some: { branchId: ctx.branchId } } } : {}) } }),
+      canSeeStaff
+        ? tx.clinicMembership.findMany({
+            where: {
+              clinicId: ctx.clinicId,
+              role: { key: { in: ["ADMINISTRATOR", "CLINIC_MANAGER", "RECEPTIONIST", "NURSE"] } },
+              ...(ctx.branchId ? { OR: [{ branchId: ctx.branchId }, { branchId: null }] } : {}),
+            },
+            orderBy: [{ status: "asc" }, { user: { name: "asc" } }],
+            select: { id: true, status: true, role: { select: { key: true } }, user: { select: { name: true } } },
+          })
+        : null,
+    ]);
+    const quickActions = quickActionsFor(ctx);
+    const clinicCode = quickActions.includes("patient_link")
+      ? ((await tx.clinic.findFirst({ where: { id: ctx.clinicId }, select: { code: true } }))?.code ?? null)
+      : null;
+    const lastVisits = recentPatientRows.length
+      ? await tx.appointment.groupBy({
+          by: ["patientId"],
+          where: { clinicId: ctx.clinicId, patientId: { in: recentPatientRows.map((p) => p.id) }, status: "COMPLETED", ...doctorFilter },
+          _max: { startsAt: true },
+        })
+      : [];
+    const lastVisitBy = new Map(lastVisits.map((v) => [v.patientId, v._max.startsAt]));
+    const group = (keys: string[]): DashboardTeamGroup | null => {
+      if (!staffRows) return null;
+      const rows = staffRows.filter((m) => keys.includes(m.role.key));
+      return {
+        total: rows.length,
+        items: rows.slice(0, TEAM_SIZE).map((m) => ({ id: m.id, name: m.user.name, detail: m.role.key, status: m.status === "ACTIVE" ? "active" : "inactive", avatarColor: avatarColorFor(m.id) })),
+      };
+    };
 
     const counts = new Map(statusGroups.map((g) => [g.status as string, g._count._all]));
-    const [todaysAppointments, recentAppointments] = await Promise.all([describeAppointments(tx, todays), describeAppointments(tx, recent)]);
+    const [todaysAppointments, recentAppointments, upcomingAppointments] = await Promise.all([
+      describeAppointments(tx, todays),
+      describeAppointments(tx, recent),
+      describeAppointments(tx, upcoming),
+    ]);
 
     let billing: DashboardData["billing"] = null;
     if (canSeeBilling) {
       const invoiceScope = { clinicId: ctx.clinicId, ...branchFilter };
       const trendStart = istDayRange(now, -29).start;
-      const monthStart = istMonthStart(now);
       const [succeeded, openInvoices, invoiceGroups] = await Promise.all([
         tx.payment.findMany({
           where: { clinicId: ctx.clinicId, status: "SUCCEEDED", paidAt: { gte: trendStart < monthStart ? trendStart : monthStart, lt: today.end }, invoice: invoiceScope },
@@ -160,12 +325,45 @@ export async function getDashboardData(ctx: TenantContext, now: Date = new Date(
       scope: own ? "own" : "clinic",
       totalPatients,
       activeDoctors,
+      inactiveDoctors,
+      patientsAtMonthStart,
       today: {
         total: todays.length,
         waiting: todays.filter((a) => a.status === "CHECKED_IN").length,
         completed: todays.filter((a) => a.status === "COMPLETED").length,
         online: todays.filter((a) => a.type === "ONLINE").length,
+        upcoming: todays.filter((a) => (a.status === "SCHEDULED" || a.status === "CONFIRMED") && a.startsAt >= now).length,
       },
+      pendingRequests,
+      upcomingAppointments,
+      recentPatients: canSeePatients
+        ? recentPatientRows.map((p) => {
+            const last = lastVisitBy.get(p.id);
+            return {
+              id: p.id,
+              name: p.name,
+              patientNumber: p.patientNumber,
+              age: ageFrom(p.dateOfBirth, now),
+              gender: p.gender.toLowerCase(),
+              avatarColor: avatarColorFor(p.id),
+              lastVisit: last ? istDayKey(last).date : null,
+              status: p.status !== "ACTIVE" ? "inactive" : (p.appointments[0]?.status.toLowerCase() ?? "active"),
+            };
+          })
+        : null,
+      team: own
+        ? null
+        : {
+            doctors: {
+              total: doctorTotal,
+              items: doctorRows.map((d) => ({ id: d.id, name: d.user.name, detail: d.specialty.name, status: d.status === "ACTIVE" ? "active" : "inactive", avatarColor: avatarColorFor(d.id) })),
+            },
+            nurses: group(["NURSE"]),
+            receptionists: group(["RECEPTIONIST"]),
+            management: group(["ADMINISTRATOR", "CLINIC_MANAGER"]),
+          },
+      quickActions,
+      clinicCode,
       upcomingNext14Days,
       statusBreakdown: STATUS_ORDER.map((s) => ({ status: s.toLowerCase(), count: counts.get(s) ?? 0 })).filter((s) => s.count > 0),
       todaysAppointments,

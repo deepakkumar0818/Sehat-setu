@@ -17,7 +17,11 @@ import { useClinicSettings } from "@/hooks/use-clinic-admin";
 import { useDataStore } from "@/store/data-store";
 import { useLiveData } from "@/lib/data-source";
 import { formatCurrency } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import type { InvoiceCategory } from "@/types";
+
+/** Line-item columns on wider screens: description, type, qty, price, amount, remove. */
+const LINE_GRID = "sm:grid-cols-[minmax(0,1fr)_8.5rem_4.5rem_7rem_5.5rem_2.25rem]";
 
 const CATEGORIES: { value: InvoiceCategory; label: string }[] = [
   { value: "consultation", label: "Consultation" },
@@ -109,7 +113,7 @@ export function ManualInvoiceDialog({ open, onOpenChange, patientId, branchId, o
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Create invoice</DialogTitle>
           <DialogDescription>Add line items for consultation, medicines, lab tests, or procedures.</DialogDescription>
@@ -122,41 +126,67 @@ export function ManualInvoiceDialog({ open, onOpenChange, patientId, branchId, o
             </div>
           )}
           <div className="space-y-2">
-            {fields.map((field, index) => (
-              <div key={field.id} className="grid grid-cols-12 items-start gap-2">
-                <div className="col-span-5">
-                  <Input placeholder="Description" {...register(`items.${index}.description`)} />
+            <Label>Line items</Label>
+            {/* Column headings (wide screens); on phones each item is a labelled card. */}
+            <div className={cn(LINE_GRID, "hidden px-1 text-xs font-medium text-muted-foreground sm:grid")}>
+              <span>Description</span>
+              <span>Type</span>
+              <span>Qty</span>
+              <span>Price (₹)</span>
+              <span className="text-right">Amount</span>
+              <span className="sr-only">Remove</span>
+            </div>
+            {fields.map((field, index) => {
+              const item = values.items?.[index];
+              const amount = (Number(item?.quantity) || 0) * (Number(item?.unitPrice) || 0);
+              const itemErrors = errors.items?.[index];
+              return (
+                <div key={field.id} className={cn(LINE_GRID, "grid grid-cols-2 items-start gap-2 rounded-lg border p-2 sm:rounded-none sm:border-0 sm:p-0")}>
+                  <div className="col-span-2 space-y-1 sm:col-span-1">
+                    <Label htmlFor={`item-${index}-desc`} className="text-xs text-muted-foreground sm:sr-only">Description</Label>
+                    <Input id={`item-${index}-desc`} placeholder="e.g. Consultation fee" aria-invalid={Boolean(itemErrors?.description)} {...register(`items.${index}.description`)} />
+                  </div>
+                  <div className="col-span-2 space-y-1 sm:col-span-1">
+                    <Label className="text-xs text-muted-foreground sm:sr-only">Type</Label>
+                    <Controller
+                      control={control}
+                      name={`items.${index}.category`}
+                      render={({ field: categoryField }) => (
+                        <Select value={categoryField.value} onValueChange={categoryField.onChange}>
+                          <SelectTrigger className="w-full" aria-label="Type"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {CATEGORIES.map((c) => (
+                              <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor={`item-${index}-qty`} className="text-xs text-muted-foreground sm:sr-only">Qty</Label>
+                    <Input id={`item-${index}-qty`} type="number" min={1} inputMode="numeric" className="tabular-nums" aria-invalid={Boolean(itemErrors?.quantity)} {...register(`items.${index}.quantity`)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor={`item-${index}-price`} className="text-xs text-muted-foreground sm:sr-only">Price (₹)</Label>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">₹</span>
+                      <Input id={`item-${index}-price`} type="number" min={0} inputMode="decimal" className="pl-6 tabular-nums" aria-invalid={Boolean(itemErrors?.unitPrice)} {...register(`items.${index}.unitPrice`)} />
+                    </div>
+                  </div>
+                  <div className="flex h-9 items-center justify-between gap-2 sm:justify-end">
+                    <span className="text-xs text-muted-foreground sm:hidden">Amount</span>
+                    <span className="text-sm font-medium tabular-nums text-foreground">{formatCurrency(amount)}</span>
+                  </div>
+                  <div className="flex h-9 items-center justify-end">
+                    <Button type="button" variant="ghost" size="icon" aria-label={`Remove line ${index + 1}`} onClick={() => remove(index)} disabled={fields.length === 1}>
+                      <Trash2Icon className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
-                <div className="col-span-3">
-                  <Controller
-                    control={control}
-                    name={`items.${index}.category`}
-                    render={({ field: categoryField }) => (
-                      <Select value={categoryField.value} onValueChange={categoryField.onChange}>
-                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {CATEGORIES.map((c) => (
-                            <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    )}
-                  />
-                </div>
-                <div className="col-span-2">
-                  <Input type="number" min={1} placeholder="Qty" {...register(`items.${index}.quantity`)} />
-                </div>
-                <div className="col-span-1">
-                  <Input type="number" min={0} placeholder="₹" {...register(`items.${index}.unitPrice`)} />
-                </div>
-                <div className="col-span-1 flex h-9 items-center">
-                  <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} disabled={fields.length === 1}>
-                    <Trash2Icon className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-            {errors.items && <p className="text-xs text-danger">Add at least one valid line item.</p>}
+              );
+            })}
+            {errors.items && <p className="text-xs text-danger">Each line needs a description, a quantity of at least 1 and a price.</p>}
             <Button type="button" variant="outline" size="sm" onClick={() => append({ description: "", category: "other", quantity: 1, unitPrice: 0 })}>
               <PlusIcon /> Add line item
             </Button>
@@ -174,11 +204,11 @@ export function ManualInvoiceDialog({ open, onOpenChange, patientId, branchId, o
             </div>
           </div>
 
-          <div className="space-y-1 rounded-md bg-muted/50 p-3 text-sm">
-            <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>{formatCurrency(subtotal)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Discount</span><span>−{formatCurrency(Number(values.discount) || 0)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Tax</span><span>+{formatCurrency(tax)}</span></div>
-            <div className="flex justify-between border-t pt-1 font-semibold"><span>Total</span><span>{formatCurrency(total)}</span></div>
+          <div className="space-y-1.5 rounded-md bg-muted/50 p-3 text-sm tabular-nums">
+            <div className="flex justify-between"><span className="text-muted-foreground">Subtotal ({fields.length} item{fields.length === 1 ? "" : "s"})</span><span>{formatCurrency(subtotal)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Discount</span><span>−{formatCurrency(discount)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Tax ({Number(values.taxRate) || 0}%)</span><span>+{formatCurrency(tax)}</span></div>
+            <div className="flex justify-between border-t pt-1.5 text-base font-semibold"><span>Total</span><span>{formatCurrency(total)}</span></div>
           </div>
 
           <DialogFooter>

@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { CalendarXIcon } from "lucide-react";
 import { isSupabaseAuthEnabled } from "@/lib/auth/config";
-import { istGreeting } from "@/lib/ist";
+import { istGreeting, istTodayKey } from "@/lib/ist";
 import { requireStaffContext } from "@/server/auth/session";
 import { getDashboardData } from "@/server/data/dashboard";
 import type { TenantContext } from "@/server/auth/authorize";
@@ -39,5 +39,6 @@ async function LiveDashboardSection({ ctx }: { ctx: TenantContext }) {
     );
   }
   const data = await getDashboardData(ctx);
-  return <LiveDashboard data={data} greeting={istGreeting(new Date())} name={displayName(ctx)} />;
+  const now = new Date();
+  return <LiveDashboard data={data} greeting={istGreeting(now)} name={displayName(ctx)} today={istTodayKey(now)} />;
 }

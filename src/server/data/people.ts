@@ -5,7 +5,7 @@ import { assertRecordAccess, hasAnyPermission, requirePermission, type TenantCon
 import { DataError } from "@/server/api/errors";
 import type { TenantTx } from "@/server/db/tenant";
 import type { Branch, Doctor, StaffMember, StaffRole } from "@/types";
-import type { StaffCapabilities } from "@/lib/live-types";
+import type { MyProfile, StaffCapabilities } from "@/lib/live-types";
 import { availabilityFrom, avatarColorFor, ROLE_KEY_TO_STAFF_ROLE, toUiDoctor, type DbDoctorRow } from "./mappers";
 import { loadClinicSettings } from "./clinic-settings";
 import { pageArgs, runScoped, type Page } from "./scope";
@@ -123,6 +123,8 @@ export async function listStaff(
   const search = input.search?.trim();
   const where = {
     clinicId: ctx.clinicId,
+    // The rest of the team: your own account is under Settings → Account (My profile).
+    userId: { not: ctx.userId },
     role: roleFilter ? { key: roleFilter } : { key: { in: Object.keys(ROLE_KEY_TO_STAFF_ROLE) as (keyof typeof ROLE_KEY_TO_STAFF_ROLE)[] } },
     ...(ctx.branchId ? { OR: [{ branchId: ctx.branchId }, { branchId: null }] } : {}),
     ...(input.branchId && input.branchId !== "all" ? { branchId: input.branchId } : {}),
@@ -417,5 +419,55 @@ export async function listBranches(ctx: TenantContext, db?: TenantTx): Promise<B
       isHeadOffice: b.isHeadOffice,
       status: b.status === "ACTIVE" ? "active" : "inactive",
     }));
+  });
+}
+
+async function ownMembership(ctx: TenantContext, tx: TenantTx) {
+  return tx.clinicMembership.findFirst({
+    where: { clinicId: ctx.clinicId, userId: ctx.userId, status: "ACTIVE", role: { key: { not: "PATIENT" } } },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, branch: { select: { name: true } } },
+  });
+}
+
+export async function getMyProfile(ctx: TenantContext, db?: TenantTx): Promise<MyProfile> {
+  return runScoped(ctx, db, async (tx) => {
+    const [user, membership] = await Promise.all([
+      tx.user.findFirst({ where: { id: ctx.userId }, select: { name: true, email: true, phone: true } }),
+      ownMembership(ctx, tx),
+    ]);
+    if (!user || !membership) throw new AuthError("NOT_FOUND");
+    return {
+      name: user.name,
+      email: user.email,
+      phone: user.phone ?? "",
+      roles: [...ctx.roles],
+      branchName: membership.branch?.name ?? null,
+      clinicName: ctx.clinicName,
+      canEdit: hasAnyPermission(ctx, STAFF_DETAILS_MANAGE),
+    };
+  });
+}
+
+const myProfileSchema = z
+  .object({ name: z.string().trim().min(2, "Enter your full name.").max(120), phone: phoneSchema })
+  .partial()
+  .strict()
+  .refine((d) => Object.keys(d).length > 0, "Nothing to update.");
+
+/** Edit your own name and/or phone, through app.set_staff_name / app.set_staff_phone. */
+export async function updateMyProfile(ctx: TenantContext, raw: unknown, db?: TenantTx): Promise<MyProfile> {
+  requirePermission(ctx, STAFF_DETAILS_MANAGE);
+  const patch = myProfileSchema.parse(raw);
+  return runScoped(ctx, db, async (tx) => {
+    const membership = await ownMembership(ctx, tx);
+    if (!membership) throw new AuthError("NOT_FOUND");
+    try {
+      if (patch.name !== undefined) await tx.$queryRaw`SELECT app.set_staff_name(${membership.id}::uuid, ${patch.name})::text AS id`;
+    } catch (err) {
+      mapStaffAdminError(err, "Editing names");
+    }
+    if (patch.phone !== undefined) await setStaffPhone(ctx, membership.id, { phone: patch.phone }, tx);
+    return getMyProfile(ctx, tx);
   });
 }
