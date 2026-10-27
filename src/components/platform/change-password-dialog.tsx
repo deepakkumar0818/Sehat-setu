@@ -4,28 +4,19 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { KeyRoundIcon, Loader2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
-const MIN_PASSWORD = 12;
+export const MIN_PASSWORD = 12;
 
-/** The super admin's own password (top bar). Goes straight to Supabase Auth; the app never sees it. */
-export function ChangePasswordButton() {
-  const [open, setOpen] = useState(false);
+/** The signed-in person's own password. Goes straight to Supabase Auth; the app never sees it. */
+export function ChangePasswordForm({ onDone, onCancel, idPrefix = "pa" }: { onDone?: () => void; onCancel?: () => void; idPrefix?: string }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-
-  function close() {
-    if (saving) return;
-    setOpen(false);
-    setPassword("");
-    setConfirm("");
-    setError(null);
-  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -49,10 +40,9 @@ export function ChangePasswordButton() {
         return;
       }
       toast.success("Password changed. Use the new one next time you sign in.");
-      setSaving(false);
-      setOpen(false);
       setPassword("");
       setConfirm("");
+      onDone?.();
     } catch {
       setError("Couldn't reach the sign-in service. Please try again.");
     } finally {
@@ -61,34 +51,42 @@ export function ChangePasswordButton() {
   }
 
   return (
+    <form onSubmit={onSubmit} className="space-y-3">
+      <div className="space-y-1.5">
+        <Label htmlFor={`${idPrefix}-new-password`}>New password</Label>
+        <Input id={`${idPrefix}-new-password`} type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={`${idPrefix}-confirm-password`}>Confirm new password</Label>
+        <Input id={`${idPrefix}-confirm-password`} type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+      </div>
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
+      <div className="flex justify-end gap-2">
+        {onCancel && <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>Cancel</Button>}
+        <Button type="submit" disabled={saving || !password || !confirm}>
+          {saving && <Loader2Icon className="animate-spin" />}
+          Change password
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/** Top-bar shortcut: the same form in a dialog. */
+export function ChangePasswordButton() {
+  const [open, setOpen] = useState(false);
+  return (
     <>
       <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
         <KeyRoundIcon /> <span className="hidden sm:inline">Change password</span>
       </Button>
-      <Dialog open={open} onOpenChange={(o) => !o && close()}>
+      <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Change password</DialogTitle>
             <DialogDescription>At least {MIN_PASSWORD} characters. You stay signed in on this device.</DialogDescription>
           </DialogHeader>
-          <form onSubmit={onSubmit} className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="pa-new-password">New password</Label>
-              <Input id="pa-new-password" type="password" autoComplete="new-password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pa-confirm-password">Confirm new password</Label>
-              <Input id="pa-confirm-password" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
-            </div>
-            {error && <p role="alert" className="text-sm text-danger">{error}</p>}
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={close} disabled={saving}>Cancel</Button>
-              <Button type="submit" disabled={saving || !password || !confirm}>
-                {saving && <Loader2Icon className="animate-spin" />}
-                Change password
-              </Button>
-            </DialogFooter>
-          </form>
+          {open && <ChangePasswordForm idPrefix="dlg" onDone={() => setOpen(false)} onCancel={() => setOpen(false)} />}
         </DialogContent>
       </Dialog>
     </>

@@ -979,6 +979,31 @@ export interface SubscriptionPayment {
   voidReason: string | null;
 }
 
+/** A payment in the all-clinics ledger (Payments page). */
+export interface PlatformLedgerPayment extends SubscriptionPayment {
+  clinicId: string;
+  clinicName: string;
+  clinicCode: string;
+}
+
+export interface PlatformPaymentsPage {
+  payments: PlatformLedgerPayment[];
+  /** Pass as `before` for the next (older) page; null when there's no more. */
+  nextBefore: string | null;
+}
+
+/** Money received from clinics per month (India's calendar), the last 12 months, oldest first. */
+export interface PlatformPaymentTotals {
+  months: { month: string; amount: number; payments: number }[];
+}
+
+export interface PlatformSettingsInfo {
+  /** Everyone with super admin access. */
+  admins: { userId: string; name: string; email: string; status: "active" | "invited" | "disabled"; signedIn: boolean; since: string; isYou: boolean }[];
+  /** The server can email invitations (SUPABASE_SECRET_KEY set). */
+  emailConfigured: boolean;
+}
+
 export interface PlatformClinicDetail {
   id: string;
   code: string;

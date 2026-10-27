@@ -103,3 +103,21 @@ export function usePlatformActivity(filter: { clinicId?: string; kind: PlatformA
     getNextPageParam: (last) => last.nextBefore,
   });
 }
+
+/** Every clinic's payments, newest first, 50 at a time. */
+export function usePlatformPayments(filter: { clinicId?: string } = {}) {
+  return useInfiniteQuery({
+    queryKey: ["platform", "payments", filter.clinicId ?? "all"],
+    queryFn: ({ pageParam }) => liveApi.platform.payments({ ...filter, before: pageParam ?? undefined }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextBefore,
+  });
+}
+
+export function usePlatformPaymentTotals() {
+  return useQuery({ queryKey: ["platform", "payments", "totals"], queryFn: liveApi.platform.paymentTotals });
+}
+
+export function usePlatformSettings() {
+  return useQuery({ queryKey: ["platform", "settings"], queryFn: liveApi.platform.settings });
+}

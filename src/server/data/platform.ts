@@ -4,13 +4,17 @@ import { AuthError } from "@/server/auth/errors";
 import type { Identity } from "@/server/auth/authorize";
 import { DataError } from "@/server/api/errors";
 import { withUserDb } from "@/server/db/tenant";
-import { sendInvitationEmail, type DeliveryResult } from "@/server/supabase-admin";
+import { emailSendingConfigured, sendInvitationEmail, type DeliveryResult } from "@/server/supabase-admin";
 import type {
   PlatformActivityPage,
   PlatformClinic,
   PlatformClinicCreated,
   PlatformClinicDetail,
+  PlatformLedgerPayment,
   PlatformOverview,
+  PlatformPaymentsPage,
+  PlatformPaymentTotals,
+  PlatformSettingsInfo,
   PlatformPlan,
   PlatformSubscription,
   SubscriptionPayment,
@@ -402,4 +406,39 @@ export async function getPlatformActivity(identity: Identity, raw: unknown): Pro
     return row.a.map((e) => ({ ...e, outcome: lower(e.outcome) }));
   });
   return { events, nextBefore: events.length === PAGE ? events[events.length - 1].occurredAt : null };
+}
+
+// --- Payments ledger and settings (migration 20261105000000_platform_payments_ledger) ---
+
+export const paymentsQuerySchema = z.object({
+  clinicId: uuid.optional(),
+  before: z.string().datetime({ offset: true }).optional(),
+});
+
+/** Every clinic's payments to Sehat Setu, newest recorded first, 50 at a time. */
+export async function getPlatformPayments(identity: Identity, raw: unknown): Promise<PlatformPaymentsPage> {
+  const q = paymentsQuerySchema.parse(raw);
+  const payments = await asPlatform(identity, async (tx) => {
+    const [row] = await tx.$queryRaw<{ p: (RawPayment & { clinicId: string; clinicName: string; clinicCode: string })[] }[]>`
+      SELECT app.platform_payments(${q.clinicId ?? null}::uuid, ${q.before ?? null}::timestamptz) AS p`;
+    return row.p.map(({ clinicId, clinicName, clinicCode, ...p }): PlatformLedgerPayment => ({ ...toPayment(p), clinicId, clinicName, clinicCode }));
+  });
+  return { payments, nextBefore: payments.length === PAGE ? payments[payments.length - 1].createdAt : null };
+}
+
+/** Money received per month for the last 12 months. */
+export async function getPlatformPaymentTotals(identity: Identity): Promise<PlatformPaymentTotals> {
+  const months = await asPlatform(identity, async (tx) => {
+    const [row] = await tx.$queryRaw<{ t: { month: string; amountPaise: number; payments: number }[] }[]>`SELECT app.platform_payment_totals() AS t`;
+    return row.t;
+  });
+  return { months: months.map(({ amountPaise, ...m }) => ({ ...m, amount: amountPaise / 100 })) };
+}
+
+type RawAdmin = Omit<PlatformSettingsInfo["admins"][number], "status"> & { status: "ACTIVE" | "INVITED" | "DISABLED" };
+
+/** For the Settings page: who has super admin access, and whether invitation emails can be sent. */
+export async function getPlatformSettings(identity: Identity): Promise<PlatformSettingsInfo> {
+  const admins = await asPlatform(identity, async (tx) => (await tx.$queryRaw<{ a: RawAdmin[] }[]>`SELECT app.platform_admin_list() AS a`)[0].a);
+  return { admins: admins.map((a) => ({ ...a, status: lower(a.status) })), emailConfigured: emailSendingConfigured() };
 }

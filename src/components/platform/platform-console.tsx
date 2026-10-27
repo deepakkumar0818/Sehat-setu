@@ -1,14 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { AlertTriangleIcon, Building2Icon, CalendarDaysIcon, IndianRupeeIcon, MailIcon, PlusIcon, RepeatIcon, UsersIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  Building2Icon,
+  CalendarDaysIcon,
+  CheckCircle2Icon,
+  DownloadIcon,
+  IndianRupeeIcon,
+  MoreHorizontalIcon,
+  PlusIcon,
+  RepeatIcon,
+  UsersIcon,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -17,88 +31,133 @@ import { PageHeader } from "@/components/shared/page-header";
 import { QueryError } from "@/components/shared/query-error";
 import { SearchInput } from "@/components/shared/search-input";
 import { StatCard } from "@/components/shared/stat-card";
-import { useCreatePlatformClinic, usePlatformOverview, useResendClinicAdminInvite, useSetPlatformClinicStatus } from "@/hooks/use-platform";
+import { useCreatePlatformClinic, usePlatformOverview, useSetPlatformClinicStatus } from "@/hooks/use-platform";
 import { formatCurrency, formatDate, formatTimeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { PlatformClinic, PlatformClinicInput } from "@/lib/live-types";
+import { clinicAlerts, clinicsCsv, limitsReached, sortClinics, type AlertTone, type ClinicAlert, type ClinicSort } from "@/lib/platform-insights";
 import { ClinicStatusBadge, SubscriptionBadge, priceText } from "./platform-shared";
 
-// The super admin console: every clinic on Sehat Setu with its usage and
-// subscription, adding a clinic, and suspending or reactivating one. A clinic's
-// name opens its own page (plan, payments, people, administrators). Counts
-// only: no patient, clinical or billing records are shown here.
+// The super admin console: every clinic on Sehat Setu, what needs attention
+// (no administrator, payment overdue, trial ending, at a plan limit, unused),
+// each clinic's plan and usage, adding a clinic, exporting the list, and
+// suspending or reactivating one. A clinic's page has its plan, payments,
+// people and administrators. Counts only: no patient, clinical or billing
+// records are shown here.
 
-type Filter = "all" | "overdue" | "due_soon" | "trial" | "suspended";
+type Filter = "all" | "attention" | "overdue" | "due_soon" | "trial" | "suspended";
 const FILTERS: { value: Filter; label: string }[] = [
   { value: "all", label: "All" },
+  { value: "attention", label: "Needs attention" },
   { value: "overdue", label: "Payment overdue" },
   { value: "due_soon", label: "Due soon" },
   { value: "trial", label: "On free trial" },
   { value: "suspended", label: "Suspended" },
 ];
+const SORTS: { value: ClinicSort; label: string }[] = [
+  { value: "attention", label: "Needs attention first" },
+  { value: "newest", label: "Newest first" },
+  { value: "name", label: "Name (A–Z)" },
+  { value: "paid_until", label: "Paid-until (soonest)" },
+  { value: "appointments", label: "Most appointments" },
+];
+const urgent = (a: ClinicAlert) => a.tone !== "info";
 const matches = (c: PlatformClinic, f: Filter) =>
-  f === "all" || (f === "suspended" ? c.status === "suspended" : c.status === "active" && c.subscription?.state === f);
+  f === "all" ||
+  (f === "attention" ? clinicAlerts(c).some(urgent) : f === "suspended" ? c.status === "suspended" : c.status === "active" && c.subscription?.state === f);
+
+/** The clinic's page, opening one of its dialogs ("payment", "plan", "admin", "edit"). */
+const clinicHref = (id: string, action?: string) => `/platform/clinics/${id}${action && action !== "open" ? `?do=${action}` : ""}`;
+
+const TONE_DOT: Record<AlertTone, string> = { danger: "bg-danger", warning: "bg-warning", info: "bg-info" };
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 export function PlatformConsole() {
   const query = usePlatformOverview();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [sort, setSort] = useState<ClinicSort>("attention");
   const [adding, setAdding] = useState(false);
   const [changing, setChanging] = useState<PlatformClinic | null>(null);
   const setStatus = useSetPlatformClinicStatus();
-  const resend = useResendClinicAdminInvite();
   const data = query.data;
+  const all = useMemo(() => data?.clinics ?? [], [data]);
   const q = search.trim().toLowerCase();
-  const clinics = (data?.clinics ?? []).filter(
-    (c) => matches(c, filter) && (!q || [c.name, c.code, c.city, c.email, ...c.admins.map((a) => a.email)].some((v) => v.toLowerCase().includes(q)))
+  const clinics = sortClinics(
+    all.filter((c) => matches(c, filter) && (!q || [c.name, c.code, c.city, c.email, ...c.admins.map((a) => a.email)].some((v) => v.toLowerCase().includes(q)))),
+    sort
   );
+  const attention = all.flatMap((c) => clinicAlerts(c).map((a) => ({ clinic: c, alert: a })));
+  const needAttention = new Set(attention.filter((x) => urgent(x.alert)).map((x) => x.clinic.id)).size;
   const autoSuspended = data?.autoSuspended ?? 0;
   useEffect(() => {
     if (autoSuspended > 0) toast.warning(`${autoSuspended} clinic${autoSuspended === 1 ? " was" : "s were"} suspended automatically: payment overdue past the grace days.`);
   }, [autoSuspended]);
 
+  function exportCsv() {
+    const url = URL.createObjectURL(new Blob(["﻿" + clinicsCsv(clinics)], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `sehat-setu-clinics-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader
         title="All clinics"
-        description="Every clinic on Sehat Setu, how much it's used, and who runs it."
-        actions={<Button onClick={() => setAdding(true)}><PlusIcon /> Add clinic</Button>}
+        description="Every clinic on Sehat Setu: what needs your attention, what each pays, and how much it's used."
+        actions={
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={exportCsv} disabled={!clinics.length}><DownloadIcon /> Export</Button>
+            <Button onClick={() => setAdding(true)}><PlusIcon /> Add clinic</Button>
+          </div>
+        }
       />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
-        <StatCard label="Clinics" value={data ? `${data.totals.activeClinics} active / ${data.totals.clinics}` : "—"} icon={Building2Icon} isLoading={query.isLoading} />
-        <StatCard label="Monthly recurring revenue" value={data ? formatCurrency(data.totals.mrr) : "—"} icon={RepeatIcon} isLoading={query.isLoading} />
-        <StatCard label="Received from clinics this month" value={data ? formatCurrency(data.totals.subscriptionCollectedThisMonth) : "—"} icon={IndianRupeeIcon} isLoading={query.isLoading} />
+        <StatCard label="Clinics" value={data ? `${data.totals.activeClinics} active of ${data.totals.clinics}` : "—"} icon={Building2Icon} isLoading={query.isLoading} />
         <StatCard
-          label="Payment overdue / due soon"
-          value={data ? `${data.totals.overdue} / ${data.totals.dueSoon}` : "—"}
+          label="Need attention"
+          value={data ? String(needAttention) : "—"}
           icon={AlertTriangleIcon}
-          tone={data && data.totals.overdue > 0 ? "danger" : data && data.totals.dueSoon > 0 ? "warning" : "default"}
+          tone={attention.some((x) => x.alert.tone === "danger") ? "danger" : needAttention > 0 ? "warning" : "default"}
           isLoading={query.isLoading}
         />
-        <StatCard label="Patients" value={data ? String(data.totals.patients) : "—"} icon={UsersIcon} isLoading={query.isLoading} />
+        <StatCard label="Monthly recurring revenue" value={data ? formatCurrency(data.totals.mrr) : "—"} icon={RepeatIcon} isLoading={query.isLoading} />
+        <StatCard label="Received from clinics this month" value={data ? formatCurrency(data.totals.subscriptionCollectedThisMonth) : "—"} icon={IndianRupeeIcon} isLoading={query.isLoading} />
+        <StatCard label="Patients (all clinics)" value={data ? String(data.totals.patients) : "—"} icon={UsersIcon} isLoading={query.isLoading} />
         <StatCard label="Appointments this month" value={data ? String(data.totals.appointmentsThisMonth) : "—"} icon={CalendarDaysIcon} isLoading={query.isLoading} />
       </div>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <SearchInput value={search} onChange={setSearch} placeholder="Search clinic, code, city or admin email..." className="sm:w-80" />
-        <div className="flex flex-wrap gap-1" role="group" aria-label="Show">
-          {FILTERS.map((f) => {
-            const n = f.value === "all" ? null : (data?.clinics ?? []).filter((c) => matches(c, f.value)).length;
-            return (
-              <Button
-                key={f.value}
-                size="sm"
-                variant={filter === f.value ? "secondary" : "ghost"}
-                aria-pressed={filter === f.value}
-                onClick={() => setFilter(f.value)}
-                className={cn("h-8", f.value === "overdue" && n ? "text-danger" : undefined)}
-              >
-                {f.label}
-                {n !== null && <span className="ml-1 tabular-nums text-muted-foreground">{n}</span>}
-              </Button>
-            );
-          })}
+      {data && <AttentionPanel items={attention} />}
+
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <SearchInput value={search} onChange={setSearch} placeholder="Search clinic, code, city or admin email..." className="lg:w-72" />
+        <div className="flex flex-wrap items-center gap-1">
+          <div className="flex flex-wrap gap-1" role="group" aria-label="Show">
+            {FILTERS.map((f) => {
+              const n = f.value === "all" ? null : all.filter((c) => matches(c, f.value)).length;
+              return (
+                <Button
+                  key={f.value}
+                  size="sm"
+                  variant={filter === f.value ? "secondary" : "ghost"}
+                  aria-pressed={filter === f.value}
+                  onClick={() => setFilter(f.value)}
+                  className={cn("h-8", (f.value === "overdue" || f.value === "attention") && n ? "text-danger" : undefined)}
+                >
+                  {f.label}
+                  {n !== null && <span className="ml-1 tabular-nums text-muted-foreground">{n}</span>}
+                </Button>
+              );
+            })}
+          </div>
+          <Select value={sort} onValueChange={(v) => setSort(v as ClinicSort)}>
+            <SelectTrigger className="h-8 w-48" aria-label="Sort"><SelectValue /></SelectTrigger>
+            <SelectContent>{SORTS.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}</SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -119,98 +178,23 @@ export function PlatformConsole() {
               <TableRow>
                 <TableHead>Clinic</TableHead>
                 <TableHead>Administrator</TableHead>
-                <TableHead>Plan</TableHead>
-                <TableHead className="text-right">Branches</TableHead>
-                <TableHead className="text-right">Staff</TableHead>
-                <TableHead className="text-right">Doctors</TableHead>
-                <TableHead className="text-right">Patients</TableHead>
-                <TableHead className="text-right">Appts (month)</TableHead>
-                <TableHead className="text-right">Clinic collected (month)</TableHead>
+                <TableHead>Plan & payment</TableHead>
+                <TableHead>Size & usage</TableHead>
                 <TableHead>Last activity</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead />
+                <TableHead className="w-px" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {clinics.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell>
-                    <Link href={`/platform/clinics/${c.id}`} className="font-medium text-foreground hover:text-primary hover:underline">
-                      {c.name} <span className="font-mono text-xs text-muted-foreground">{c.code}</span>
-                    </Link>
-                    <p className="text-xs text-muted-foreground">{c.city}, {c.state} · {c.phone}</p>
-                    <p className="text-xs text-muted-foreground">Added {formatDate(c.createdAt)}</p>
-                  </TableCell>
-                  <TableCell>
-                    {c.admins.length === 0 ? (
-                      <span className="text-xs text-muted-foreground">None</span>
-                    ) : (
-                      c.admins.map((a) => (
-                        <div key={a.email} className="text-sm">
-                          <p className="text-foreground">{a.name}</p>
-                          <p className="text-xs text-muted-foreground">{a.email}</p>
-                          {a.status === "invited" && (
-                            <div className="mt-0.5 flex items-center gap-1">
-                              <Badge variant="outline" className="border-warning/40 text-warning">Not signed in yet</Badge>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 px-1.5 text-xs"
-                                disabled={resend.isPending}
-                                onClick={() =>
-                                  resend.mutate({ id: c.id, email: a.email }, {
-                                    onSuccess: (r) => (r.sent ? toast.success(`Invitation sent to ${a.email}.`) : toast.error(r.problem ?? "The invitation couldn't be sent.")),
-                                  })
-                                }
-                              >
-                                <MailIcon className="h-3 w-3" /> Resend
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {c.subscription ? (
-                      <div className="space-y-0.5 text-sm">
-                        <p className="text-foreground">{c.subscription.planName}</p>
-                        <p className="text-xs text-muted-foreground">{priceText(c.subscription)}</p>
-                        <div className="flex items-center gap-1.5">
-                          <SubscriptionBadge subscription={c.subscription} />
-                          <span className={cn("text-xs", c.subscription.state === "overdue" ? "text-danger" : "text-muted-foreground")}>
-                            {c.subscription.state === "overdue" ? `since ${formatDate(c.subscription.paidUntil)}` : `to ${formatDate(c.subscription.paidUntil)}`}
-                          </span>
-                        </div>
-                      </div>
-                    ) : (
-                      <SubscriptionBadge subscription={null} />
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">{c.branches}</TableCell>
-                  <TableCell className="text-right">{c.staff}</TableCell>
-                  <TableCell className="text-right">{c.doctors}</TableCell>
-                  <TableCell className="text-right">{c.patients}</TableCell>
-                  <TableCell className="text-right">{c.appointmentsThisMonth}{c.upcomingAppointments > 0 && <span className="block text-xs text-muted-foreground">{c.upcomingAppointments} upcoming</span>}</TableCell>
-                  <TableCell className="text-right">{formatCurrency(c.revenueThisMonth)}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{c.lastActivityAt ? formatTimeAgo(c.lastActivityAt) : "Never"}</TableCell>
-                  <TableCell>
-                    <ClinicStatusBadge status={c.status} />
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button variant="outline" size="sm" asChild>
-                        <Link href={`/platform/clinics/${c.id}`}>Manage</Link>
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => setChanging(c)}>{c.status === "active" ? "Suspend" : "Reactivate"}</Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
+                <ClinicRow key={c.id} clinic={c} onChangeStatus={() => setChanging(c)} />
               ))}
             </TableBody>
           </Table>
         </div>
       )}
+      <p className="text-xs text-muted-foreground">
+        Appointments count bookings dated this month that weren&apos;t cancelled; &quot;upcoming&quot; are bookings still ahead. &quot;Collected&quot; is money the clinic took from its patients, not what it pays you.
+      </p>
 
       {adding && <AddClinicDialog onClose={() => setAdding(false)} />}
       <ConfirmDialog
@@ -236,6 +220,145 @@ export function PlatformConsole() {
         }
       />
     </div>
+  );
+}
+
+/** Every problem across all clinics, with a button that goes straight to fixing it. */
+function AttentionPanel({ items }: { items: { clinic: PlatformClinic; alert: ClinicAlert }[] }) {
+  const [showAll, setShowAll] = useState(false);
+  const order: Record<AlertTone, number> = { danger: 0, warning: 1, info: 2 };
+  const sorted = [...items].sort((a, b) => order[a.alert.tone] - order[b.alert.tone] || a.clinic.name.localeCompare(b.clinic.name));
+  const shown = showAll ? sorted : sorted.slice(0, 5);
+  if (items.length === 0) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-success/30 bg-success-muted px-4 py-3 text-sm text-success">
+        <CheckCircle2Icon className="h-4 w-4" aria-hidden /> All clinics are in good shape: everyone has an administrator, and no payments are due.
+      </div>
+    );
+  }
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Needs your attention ({items.length})</CardTitle>
+        <CardDescription>Fix these to keep clinics running and paying.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <ul className="divide-y">
+          {shown.map(({ clinic, alert }) => (
+            <li key={`${clinic.id}-${alert.key}`} className="flex flex-col gap-2 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", TONE_DOT[alert.tone])} aria-hidden />
+                <p className="text-sm">
+                  <Link href={clinicHref(clinic.id)} className="font-medium text-foreground hover:text-primary hover:underline">{clinic.name}</Link>
+                  <span className="text-muted-foreground"> · {alert.text}</span>
+                </p>
+              </div>
+              <Button variant="outline" size="sm" className="shrink-0 self-start sm:self-auto" asChild>
+                <Link href={clinicHref(clinic.id, alert.action)}>{alert.actionLabel}</Link>
+              </Button>
+            </li>
+          ))}
+        </ul>
+        {sorted.length > 5 && (
+          <Button variant="ghost" size="sm" onClick={() => setShowAll((v) => !v)}>{showAll ? "Show fewer" : `Show all ${sorted.length}`}</Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ClinicRow({ clinic: c, onChangeStatus }: { clinic: PlatformClinic; onChangeStatus: () => void }) {
+  const s = c.subscription;
+  const full = limitsReached(c);
+  const alerts = clinicAlerts(c);
+  const worst = alerts.find((a) => a.tone === "danger") ?? alerts.find((a) => a.tone === "warning");
+  return (
+    <TableRow className={c.status === "suspended" ? "bg-muted/40" : undefined}>
+      <TableCell className="min-w-56">
+        <div className="flex items-center gap-2">
+          <Link href={clinicHref(c.id)} className="font-medium text-foreground hover:text-primary hover:underline">{c.name}</Link>
+          <span className="font-mono text-xs text-muted-foreground">{c.code}</span>
+          {c.status !== "active" && <ClinicStatusBadge status={c.status} />}
+        </div>
+        <p className="text-xs text-muted-foreground">{c.city}, {c.state} · {c.phone}</p>
+        <p className="text-xs text-muted-foreground">Added {formatDate(c.createdAt)}</p>
+        {worst && (
+          <p className={cn("mt-1 flex items-center gap-1 text-xs", worst.tone === "danger" ? "text-danger" : "text-warning")}>
+            <AlertTriangleIcon className="h-3 w-3" aria-hidden /> {worst.text}
+          </p>
+        )}
+      </TableCell>
+      <TableCell className="min-w-44">
+        {c.admins.length === 0 ? (
+          <Button variant="link" size="sm" className="h-auto p-0 text-danger" asChild>
+            <Link href={clinicHref(c.id, "admin")}>+ Add administrator</Link>
+          </Button>
+        ) : (
+          c.admins.map((a) => (
+            <div key={a.email} className="text-sm">
+              <p className="text-foreground">{a.name}</p>
+              <p className="text-xs text-muted-foreground">{a.email}</p>
+              {a.status === "invited" && <Badge variant="outline" className="mt-0.5 border-warning/40 text-warning">Not signed in yet</Badge>}
+            </div>
+          ))
+        )}
+      </TableCell>
+      <TableCell className="min-w-48">
+        {s ? (
+          <div className="space-y-0.5 text-sm">
+            <p className="text-foreground">{s.planName} <span className="text-xs text-muted-foreground">· {priceText(s)}</span></p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <SubscriptionBadge subscription={s} />
+              <span className={cn("text-xs", s.state === "overdue" ? "text-danger" : "text-muted-foreground")}>
+                {s.state === "overdue"
+                  ? `since ${formatDate(s.paidUntil)}`
+                  : s.state === "trial"
+                    ? `ends ${formatDate(s.paidUntil, "dd MMM")} · ${plural(s.daysLeft, "day")} left`
+                    : `until ${formatDate(s.paidUntil)}`}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <Button variant="link" size="sm" className="h-auto p-0" asChild>
+            <Link href={clinicHref(c.id, "plan")}>Choose a plan</Link>
+          </Button>
+        )}
+      </TableCell>
+      <TableCell className="min-w-60 text-sm">
+        <p className="text-foreground">
+          {plural(c.branches, "branch", "branches")} · {plural(c.doctors, "doctor")} · {c.staff} staff
+          {full.length > 0 && <Badge variant="outline" className="ml-1.5 border-warning/40 text-warning">At plan limit</Badge>}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {plural(c.patients, "patient")} · {plural(c.appointmentsThisMonth, "appointment")} this month
+          {c.upcomingAppointments > 0 && ` (${c.upcomingAppointments} upcoming)`}
+        </p>
+        <p className="text-xs text-muted-foreground">{formatCurrency(c.revenueThisMonth)} collected from patients this month</p>
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{c.lastActivityAt ? formatTimeAgo(c.lastActivityAt) : "Never"}</TableCell>
+      <TableCell>
+        <div className="flex justify-end gap-1">
+          <Button variant="outline" size="sm" asChild>
+            <Link href={clinicHref(c.id)}>Manage</Link>
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" aria-label={`More actions for ${c.name}`}><MoreHorizontalIcon /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem asChild disabled={!s}><Link href={clinicHref(c.id, "payment")}>Record payment</Link></DropdownMenuItem>
+              <DropdownMenuItem asChild><Link href={clinicHref(c.id, "plan")}>{s ? "Change plan" : "Choose plan"}</Link></DropdownMenuItem>
+              <DropdownMenuItem asChild><Link href={clinicHref(c.id, "admin")}>Add administrator</Link></DropdownMenuItem>
+              <DropdownMenuItem asChild><Link href={clinicHref(c.id, "edit")}>Edit details</Link></DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={onChangeStatus} className={c.status === "active" ? "text-danger focus:text-danger" : undefined}>
+                {c.status === "active" ? "Suspend clinic" : "Reactivate clinic"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </TableCell>
+    </TableRow>
   );
 }
 

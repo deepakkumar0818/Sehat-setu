@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ArrowLeftIcon, CreditCardIcon, MailIcon, PencilIcon, PlusIcon, UserMinusIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -40,9 +41,17 @@ import { ActivityList, ClinicStatusBadge, LimitMeter, PAYMENT_METHODS, Subscript
 // usage and recent activity. Names and roles only: no patient, clinical or
 // billing records.
 
-export function PlatformClinicDetailView({ id }: { id: string }) {
+export type ClinicDialog = "edit" | "plan" | "payment" | "admin";
+
+export function PlatformClinicDetailView({ id, initialDialog = null }: { id: string; initialDialog?: ClinicDialog | null }) {
   const query = usePlatformClinic(id);
-  const [dialog, setDialog] = useState<null | "edit" | "plan" | "payment" | "admin" | "status">(null);
+  const router = useRouter();
+  const [dialog, setDialogState] = useState<null | ClinicDialog | "status">(initialDialog);
+  const setDialog = (d: null | ClinicDialog | "status") => {
+    setDialogState(d);
+    // Drop ?do= once its dialog closes, so a refresh doesn't reopen it.
+    if (d === null && initialDialog) router.replace(`/platform/clinics/${id}`, { scroll: false });
+  };
   const [voiding, setVoiding] = useState<SubscriptionPayment | null>(null);
   const [removing, setRemoving] = useState<PlatformClinicDetail["people"][number] | null>(null);
   const setStatus = useSetPlatformClinicStatus();
