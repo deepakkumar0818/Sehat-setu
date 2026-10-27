@@ -1,5 +1,4 @@
 import "server-only";
-import { onlinePaymentsConfigured } from "@/server/payments/razorpay";
 import { refundBookingFees } from "./online-payments";
 import { z } from "zod";
 import { AuthError } from "@/server/auth/errors";
@@ -19,7 +18,6 @@ import { lookupNames } from "./documents";
 import { eligibleDocumentWhere, eligibleReportWhere } from "./portal";
 import { submitSymptomReport } from "./patient-intake";
 import {
-  MAX_DAYS_AHEAD,
   appointmentReference,
   appointmentsQuerySchema,
   bookableSlots,
@@ -32,6 +30,7 @@ import {
   slotInstant,
   slotsQuerySchema,
 } from "./portal-booking-rules";
+import { loadClinicSettings, patientCanPayOnline } from "./clinic-settings";
 import { pageArgs, runPatientScoped, type Page } from "./scope";
 
 // Patient portal: the signed-in patient's OWN appointments, booking, invoices
@@ -68,7 +67,7 @@ async function describe(tx: TenantTx, rows: ApptRow[], now: Date): Promise<Porta
   const feeOf = new Map(specialties.map((d) => [d.id, d.consultationFeePaise]));
   // Online booking-fee state (the patient's own orders and bills, under RLS). Mirrors app.online_payable.
   const ids = rows.map((r) => r.id);
-  const payOnline = onlinePaymentsConfigured();
+  const payOnline = await patientCanPayOnline(tx);
   const [orders, invoices] = await Promise.all([
     tx.onlinePaymentOrder.findMany({ where: { appointmentId: { in: ids }, purpose: "BOOKING_FEE", status: { not: "CREATED" } }, select: { appointmentId: true, status: true } }),
     tx.invoice.findMany({ where: { appointmentId: { in: ids } }, select: { appointmentId: true } }),
@@ -141,6 +140,7 @@ export async function getMyAppointment(ctx: PatientContext, id: string, db?: Ten
 /** Branches and doctors the patient can book with, in their own clinic. */
 export async function getBookingOptions(ctx: PatientContext, db?: TenantTx): Promise<PortalBookingOptions> {
   return runPatientScoped(ctx, db, async (tx) => {
+    const settings = await loadClinicSettings(tx, ctx.clinicId);
     const branches = await tx.branch.findMany({
       where: { clinicId: ctx.clinicId, status: "ACTIVE" },
       orderBy: [{ isHeadOffice: "desc" }, { name: "asc" }],
@@ -172,7 +172,14 @@ export async function getBookingOptions(ctx: PatientContext, db?: TenantTx): Pro
           branchIds: d.branches.map((b) => b.branchId).filter((id) => branchIds.has(id)),
         }))
         .sort((a, b) => a.name.localeCompare(b.name)),
-      maxDaysAhead: MAX_DAYS_AHEAD,
+      maxDaysAhead: settings.bookingMaxDaysAhead,
+      rules: {
+        open: settings.onlineBookingEnabled,
+        needsApproval: settings.bookingNeedsApproval,
+        minNoticeMinutes: settings.bookingMinNoticeMinutes,
+        maxUpcoming: settings.bookingMaxUpcoming,
+        slotMinutes: settings.slotMinutes,
+      },
     };
   });
 }
@@ -187,14 +194,15 @@ export async function getMySlots(ctx: PatientContext, raw: unknown, db?: TenantT
       select: { id: true },
     });
     if (!doctor) throw new AuthError("NOT_FOUND");
-    let busy: { starts_at: Date }[];
+    let busy: { starts_at: Date; ends_at: Date }[];
     try {
-      busy = await tx.$queryRaw<{ starts_at: Date }[]>`
-        SELECT app.patient_doctor_busy_slots(${input.doctorId}::uuid, ${dayStart}, ${new Date(dayStart.getTime() + 864e5)}) AS starts_at`;
+      busy = await tx.$queryRaw<{ starts_at: Date; ends_at: Date }[]>`
+        SELECT starts_at, ends_at FROM app.patient_doctor_busy_ranges(${input.doctorId}::uuid, ${dayStart}, ${new Date(dayStart.getTime() + 864e5)})`;
     } catch (err) {
       mapBookingDbError(err);
     }
-    return { date: input.date, slots: bookableSlots(input.date, new Set(busy.map((b) => istDayKey(b.starts_at).time)), now) };
+    const settings = await loadClinicSettings(tx, ctx.clinicId);
+    return { date: input.date, slots: bookableSlots(input.date, busy.map((b) => ({ start: b.starts_at, end: b.ends_at })), now, settings) };
   });
 }
 
@@ -267,7 +275,7 @@ async function describeInvoices(tx: TenantTx, rows: InvoiceRow[]): Promise<Porta
   const apptIds = rows.map((r) => r.appointmentId).filter((x): x is string => Boolean(x));
   const appts = apptIds.length ? await tx.appointment.findMany({ where: { id: { in: apptIds } }, select: { id: true, startsAt: true } }) : [];
   const apptDate = new Map(appts.map((a) => [a.id, istDayKey(a.startsAt).date]));
-  const payOnline = onlinePaymentsConfigured();
+  const payOnline = await patientCanPayOnline(tx);
   return rows.map((r) => {
     const paidPaise = Math.min(paid.get(r.id) ?? 0, r.totalPaise);
     return {

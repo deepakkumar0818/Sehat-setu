@@ -218,6 +218,8 @@ function RescheduleDialog({ appt, onClose }: { appt: PortalAppointment; onClose:
   const [time, setTime] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const reschedule = usePortalReschedule();
+  const rules = usePortalBookingOptions().data;
+  const needsApproval = rules?.rules.needsApproval ?? true;
   return (
     <Dialog open onOpenChange={(o) => !o && !reschedule.isPending && onClose()}>
       <DialogContent>
@@ -225,10 +227,10 @@ function RescheduleDialog({ appt, onClose }: { appt: PortalAppointment; onClose:
           <DialogTitle>Reschedule appointment</DialogTitle>
           <DialogDescription>
             Same doctor and branch: {appt.doctorName ?? "your doctor"}, {appt.branchName ?? "clinic"}. Currently {formatDate(appt.date)} at {formatTime12h(appt.time)}.
-            {" "}The new time is a request: reception approves it before it&apos;s confirmed.
+            {needsApproval ? " The new time is a request: reception approves it before it's confirmed." : " The new time is confirmed straight away."}
           </DialogDescription>
         </DialogHeader>
-        <SlotPicker doctorId={appt.doctorId} branchId={appt.branchId} date={date} time={time} onDate={(d) => { setDate(d); setTime(""); }} onTime={setTime} />
+        <SlotPicker doctorId={appt.doctorId} branchId={appt.branchId} date={date} time={time} maxDaysAhead={rules?.maxDaysAhead} onDate={(d) => { setDate(d); setTime(""); }} onTime={setTime} />
         {error && <p role="alert" className="text-sm text-danger">{error}</p>}
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={reschedule.isPending}>Keep current time</Button>
@@ -240,7 +242,7 @@ function RescheduleDialog({ appt, onClose }: { appt: PortalAppointment; onClose:
                 { id: appt.id, date, time },
                 {
                   onSuccess: () => {
-                    toast.success("New time requested. It's awaiting receptionist approval.");
+                    toast.success(needsApproval ? "New time requested. It's awaiting receptionist approval." : "Appointment moved.");
                     onClose();
                   },
                   onError: (e) => {
@@ -598,6 +600,20 @@ export function LivePortalBooking({ initialDoctorId }: { initialDoctorId?: strin
 
   if (options.isLoading) return <Skeleton className="h-96 w-full rounded-xl" />;
   if (options.isError) return <LoadError error={options.error} what="booking options" onRetry={() => options.refetch()} />;
+  if (options.data && !options.data.rules.open && !booked) {
+    return (
+      <BookingFrame>
+        <Card data-testid="booking-closed">
+          <CardContent className="space-y-3 text-center">
+            <CalendarDaysIcon className="mx-auto h-10 w-10 text-muted-foreground" aria-hidden />
+            <h2 className="text-lg font-semibold text-foreground">Online booking is paused</h2>
+            <p className="text-sm text-muted-foreground">{options.data.clinicName} isn&apos;t taking online bookings right now. Please call the clinic to book. You can still view or cancel your appointments.</p>
+            <Button asChild variant="outline"><Link href="/portal/appointments">View my appointments</Link></Button>
+          </CardContent>
+        </Card>
+      </BookingFrame>
+    );
+  }
   const o = options.data!;
   const singleBranch = o.branches.length === 1 ? o.branches[0].id : "";
   const effectiveBranch = branchId || singleBranch;
@@ -941,13 +957,16 @@ export function LivePortalAppointments({ initialTab = "upcoming" }: { initialTab
   const [tab, setTab] = useState<PortalAppointmentScope>(initialTab);
   const [page, setPage] = useState(1);
   const q = usePortalAppointments(tab, page);
+  const needsApproval = usePortalBookingOptions().data?.rules.needsApproval ?? true;
   const empty = TABS.find((t) => t.value === tab)!.empty;
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold text-foreground">My appointments</h1>
-          <p className="text-sm text-muted-foreground">New bookings wait for receptionist approval. You can withdraw, cancel or reschedule until the visit starts.</p>
+          <p className="text-sm text-muted-foreground">
+            {needsApproval ? "New bookings wait for receptionist approval. You can withdraw, cancel or reschedule until the visit starts." : "You can cancel or reschedule until the visit starts."}
+          </p>
         </div>
         <Button asChild><Link href="/portal/book"><CalendarPlusIcon /> Book Appointment</Link></Button>
       </div>

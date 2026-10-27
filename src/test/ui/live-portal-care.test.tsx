@@ -36,7 +36,7 @@ const emptyDashboard: PortalDashboard = {
   upcoming: [], recent: [], invoices: { outstandingCount: 0, outstandingBalance: 0, latest: [] }, reportCount: 0, documentCount: 0,
 };
 const options: PortalBookingOptions = {
-  clinicName: "Aarogya Clinic", maxDaysAhead: 60,
+  clinicName: "Aarogya Clinic", maxDaysAhead: 60, rules: { open: true, needsApproval: true, minNoticeMinutes: 30, maxUpcoming: 5, slotMinutes: 30 },
   branches: [{ id: "b1", name: "Kothrud", city: "Pune", addressLine: "1 Main Rd" }],
   doctors: [{ id: "d1", name: "Dr. Asha Rao", specialty: "General Medicine", department: null, qualifications: "MBBS", experienceYears: 8, consultationFee: 500, offersOnline: true, branchIds: ["b1"] }],
 };

@@ -183,6 +183,7 @@ model Clinic {
   branches       Branch[]
   departments    Department[]
   labTestTypes   LabTestType[]
+  settings       ClinicSettings?
   memberships    ClinicMembership[]
   doctorProfiles DoctorProfile[]
   doctorBranches DoctorBranch[]
@@ -200,6 +201,42 @@ model Clinic {
   onlineOrders   OnlinePaymentOrder[]
 
   @@map("clinics")
+}
+
+/// The clinic's own settings (one row per clinic, created by a trigger on
+/// clinics; never inserted or deleted by the app). Validated and enforced in
+/// migration 20261102000000_clinic_settings: patient booking, slot overlap
+/// checks and invoice numbering read these columns.
+model ClinicSettings {
+  id                      String   @id @default(uuid()) @db.Uuid
+  clinicId                String   @unique @db.Uuid
+  /// {"mon": {"open": "09:00", "close": "17:00"}, …, "sun": null} (IST).
+  weeklyHours             Json
+  breakStart              String?  @default("13:00")
+  breakEnd                String?  @default("14:00")
+  slotMinutes             Int      @default(30)
+  onlineBookingEnabled    Boolean  @default(true)
+  bookingNeedsApproval    Boolean  @default(true)
+  bookingMinNoticeMinutes Int      @default(30)
+  bookingMaxDaysAhead     Int      @default(60)
+  bookingMaxUpcoming      Int      @default(5)
+  patientOnlinePayments   Boolean  @default(true)
+  /// Null: "<clinic code>-INV-".
+  invoicePrefix           String?
+  gstin                   String?
+  defaultTaxPercent       Int      @default(0)
+  invoiceFooter           String?
+  /// PaymentMethod values reception may record.
+  paymentMethods          String[] @default(["CASH", "UPI", "CARD", "BANK_TRANSFER", "ONLINE"])
+  /// data:image/(png|jpeg|webp);base64,… (at most ~220 KB of image).
+  logoDataUrl             String?
+  website                 String?
+  registrationNumber      String?
+  updatedAt               DateTime @updatedAt @db.Timestamptz(6)
+
+  clinic Clinic @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+
+  @@map("clinic_settings")
 }
 
 model Branch {

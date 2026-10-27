@@ -29,7 +29,7 @@ const ctx: PatientContext = { authUserId: "a", userId: "u", email: "p@example.te
 const APPT = "33333333-3333-4333-8333-333333333333";
 const sign = (o: string, p: string) => createHmac("sha256", SECRET).update(`${o}|${p}`).digest("hex");
 
-function fakeTx(found: unknown = { id: "ord-uuid" }) {
+function fakeTx(found: unknown = { id: "ord-uuid" }, patientOnlinePayments = true) {
   const sql: { text: string; values: unknown[] }[] = [];
   const tx = {
     $queryRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -40,6 +40,7 @@ function fakeTx(found: unknown = { id: "ord-uuid" }) {
       return [{}];
     }),
     onlinePaymentOrder: { findFirst: vi.fn(async () => found) },
+    clinicSettings: { findFirst: vi.fn(async () => ({ patientOnlinePayments })) },
   };
   return { tx: tx as unknown as TenantTx, sql, raw: tx };
 }
@@ -73,6 +74,13 @@ describe("starting a payment", () => {
   it("an amount from the browser is not accepted", async () => {
     const { tx } = fakeTx();
     await expect(startPatientPayment(ctx, { purpose: "invoice", id: APPT, amount: 1 }, tx)).rejects.toThrow();
+  });
+
+  it("a clinic that takes payments at the counter only refuses before anything is charged", async () => {
+    const { tx, sql } = fakeTx(undefined, false);
+    await expect(startPatientPayment(ctx, { purpose: "invoice", id: APPT }, tx)).rejects.toMatchObject({ code: "FEATURE_UNAVAILABLE" });
+    expect(sql).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("without Razorpay configured, online payment is simply unavailable", async () => {

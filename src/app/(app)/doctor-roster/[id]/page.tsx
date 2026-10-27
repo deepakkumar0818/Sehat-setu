@@ -69,10 +69,10 @@ export default function DoctorDetailPage({ params }: { params: Promise<{ id: str
 
       <Card>
         <CardHeader>
-          <CardTitle>{live ? "Clinic standard hours" : "Weekly availability"}</CardTitle>
+          <CardTitle>{live ? "Clinic hours" : "Weekly availability"}</CardTitle>
           {live && (
             <p className="text-xs text-muted-foreground">
-              The booking hours used for every doctor (lunch 1–2 pm, 30-minute slots). Individual doctor schedules aren&apos;t recorded, so this is not this doctor&apos;s personal availability.
+              The clinic&apos;s opening hours, used for every doctor (break and appointment length are in Settings → Clinic timings). Individual doctor schedules aren&apos;t recorded, so this is not this doctor&apos;s personal availability.
             </p>
           )}
         </CardHeader>

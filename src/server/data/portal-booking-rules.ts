@@ -1,19 +1,17 @@
 // Pure rules for patient self-booking, shared by the data module and its tests.
-// The database functions in migration 20261028000000_patient_self_booking are
-// the authority (they re-check the caller, the slot, the doctor and the
-// limits); these give early validation, compute what to offer, and turn the
+// The database functions (migrations 20261028000000_patient_self_booking and
+// 20261102000000_clinic_settings) are the authority: they re-check the caller,
+// the slot, the doctor and the clinic's booking rules. These give early
+// validation, compute what to offer from the clinic's settings, and turn the
 // functions' 'patient booking: <CODE>' refusals into API errors.
 import { z } from "zod";
 import { AuthError } from "@/server/auth/errors";
 import { DataError } from "@/server/api/errors";
-import { istToInstant, defaultSlotsFor, type DbAppointmentStatus } from "./mappers";
+import { slotTimesFor } from "@/lib/clinic-hours";
+import { istToInstant, type DbAppointmentStatus } from "./mappers";
 import { errorText } from "./document-rules";
-import type { PortalAppointmentScope, PortalAppointmentStatus } from "@/lib/live-types";
+import type { BookingRules, ClinicTimings, PortalAppointmentScope, PortalAppointmentStatus } from "@/lib/live-types";
 
-/** Same as app.patient_check_new_slot. */
-export const MIN_LEAD_MINUTES = 30;
-export const MAX_DAYS_AHEAD = 60;
-export const MAX_UPCOMING = 5;
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a date.");
 const hhmm = z.string().regex(/^\d{2}:\d{2}$/, "Choose a time.");
@@ -63,14 +61,21 @@ export function slotInstant(date: string, time: string): Date {
   }
 }
 
-/** The clinic's standard slots for a date that a patient may still book (lead time and window applied). */
-export function bookableSlots(date: string, busy: ReadonlySet<string>, now: Date): string[] {
-  const earliest = now.getTime() + MIN_LEAD_MINUTES * 60_000;
-  const latest = now.getTime() + MAX_DAYS_AHEAD * 864e5;
-  return defaultSlotsFor(date).filter((t) => {
-    if (busy.has(t)) return false;
+export type BookingSettings = ClinicTimings & Pick<BookingRules, "onlineBookingEnabled" | "bookingMinNoticeMinutes" | "bookingMaxDaysAhead">;
+
+/**
+ * The clinic's slots on a date that a patient may still book: booking open,
+ * the notice and window applied, and none overlapping the doctor's booked time
+ * (as app.patient_check_new_slot).
+ */
+export function bookableSlots(date: string, busy: readonly { start: Date; end: Date }[], now: Date, s: BookingSettings): string[] {
+  if (!s.onlineBookingEnabled) return [];
+  const earliest = now.getTime() + s.bookingMinNoticeMinutes * 60_000;
+  const latest = now.getTime() + s.bookingMaxDaysAhead * 864e5;
+  return slotTimesFor(date, s).filter((t) => {
     const at = istToInstant(date, t).getTime();
-    return at >= earliest && at <= latest;
+    const end = at + s.slotMinutes * 60_000;
+    return at >= earliest && at <= latest && !busy.some((b) => b.start.getTime() < end && b.end.getTime() > at);
   });
 }
 
@@ -103,19 +108,20 @@ export function scopeFilter(scope: PortalAppointmentScope, now: Date) {
 const MESSAGES: Record<string, [ConstructorParameters<typeof DataError>[0], string]> = {
   INVALID_INPUT: ["INVALID_INPUT", "Please check the booking details and try again."],
   INVALID_SLOT: ["INVALID_INPUT", "That time isn't one of the clinic's appointment slots. Choose another."],
-  TOO_SOON: ["INVALID_INPUT", `Appointments must be booked at least ${MIN_LEAD_MINUTES} minutes ahead. Choose a later slot.`],
-  TOO_FAR: ["INVALID_INPUT", `Appointments can be booked up to ${MAX_DAYS_AHEAD} days ahead.`],
+  TOO_SOON: ["INVALID_INPUT", "That time is too soon to book online. Choose a later slot."],
+  TOO_FAR: ["INVALID_INPUT", "That date is too far ahead to book online. Choose an earlier date."],
   SLOT_TAKEN: ["SLOT_TAKEN", "Sorry, that slot was just booked. Please choose another time."],
   PATIENT_CONFLICT: ["CONFLICT", "You already have an appointment at that time."],
   DUPLICATE: ["DUPLICATE", "You already have an appointment with this doctor on that day."],
-  LIMIT: ["RATE_LIMITED", `You can have up to ${MAX_UPCOMING} upcoming appointments. Cancel one, or contact the clinic.`],
+  LIMIT: ["RATE_LIMITED", "You've reached the clinic's limit of upcoming appointments. Cancel one, or contact the clinic."],
+  CLOSED: ["FEATURE_UNAVAILABLE", "The clinic isn't taking online bookings right now. Please call the clinic."],
   NOT_CHANGEABLE: ["INVALID_TRANSITION", "This appointment can no longer be changed online. Please contact the clinic."],
   ONLINE_UNAVAILABLE: ["INVALID_INPUT", "This doctor doesn't offer online consultations. Choose an in-person visit or another doctor."],
 };
 
 /** True when the booking functions don't exist yet (migration not applied). */
 export function isMissingBookingSchema(err: unknown): boolean {
-  return /function app\.(patient_book_appointment|patient_cancel_appointment|patient_reschedule_appointment|patient_doctor_busy_slots)\([^)]*\) does not exist/i.test(errorText(err));
+  return /function app\.(patient_book_appointment|patient_cancel_appointment|patient_reschedule_appointment|patient_doctor_busy_slots|patient_doctor_busy_ranges)\([^)]*\) does not exist/i.test(errorText(err));
 }
 
 /** Maps a 'patient booking: <CODE>' refusal (or a missing migration) to an API error; anything else is rethrown. */

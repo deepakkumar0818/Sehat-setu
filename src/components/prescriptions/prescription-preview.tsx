@@ -1,4 +1,4 @@
-import { Logo } from "@/components/shared/logo";
+import { ClinicLetterhead } from "@/components/shared/clinic-letterhead";
 import { formatDate } from "@/lib/format";
 import type { Prescription } from "@/types";
 
@@ -13,14 +13,7 @@ interface PrescriptionPreviewProps {
 export function PrescriptionPreview({ prescription, patient, doctor, branch }: PrescriptionPreviewProps) {
   return (
     <div className="mx-auto max-w-2xl rounded-xl border bg-card p-6 print:max-w-none print:rounded-none print:border-0 print:p-0 sm:p-8">
-      <div className="flex items-start justify-between border-b pb-4">
-        <Logo size="sm" />
-        <div className="text-right text-sm text-muted-foreground">
-          <p>{branch?.name}</p>
-          <p>{branch?.address}</p>
-          <p>{branch?.phone}</p>
-        </div>
-      </div>
+      <ClinicLetterhead kind="prescription" branch={branch} />
 
       <div className="mt-4 flex flex-wrap items-start justify-between gap-3 border-b pb-4 text-sm">
         <div>

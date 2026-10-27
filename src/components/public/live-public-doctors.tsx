@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { EmptyState } from "@/components/shared/empty-state";
 import { PersonAvatar } from "@/components/shared/person-avatar";
 import { formatCurrency } from "@/lib/format";
+import { hoursLine } from "@/lib/clinic-hours";
 import type { PublicDirectory, PublicDirectoryDoctor } from "@/lib/live-types";
 
 // The signed-out website's real doctor directory (clinic database). No ratings,
@@ -148,7 +149,14 @@ export function LivePublicDoctorProfile({ doctor, directory }: { doctor: PublicD
       <aside className="h-fit rounded-2xl border bg-card p-6 lg:sticky lg:top-24">
         <p className="text-sm text-muted-foreground">Consultation fee</p>
         <p className="text-2xl font-semibold text-foreground">{formatCurrency(doctor.consultationFee)}</p>
-        <p className="mt-3 text-sm text-muted-foreground">Clinic hours: Mon–Sat, 9:00 AM – 5:00 PM. Choose a time after signing in; reception confirms your request.</p>
+        <p className="mt-3 text-sm text-muted-foreground">
+          Clinic hours: {hoursLine(clinic?.hours)}.{" "}
+          {clinic?.onlineBooking === false
+            ? "Online booking is paused: please call the clinic."
+            : clinic?.needsApproval === false
+              ? "Choose a time after signing in; it's confirmed straight away."
+              : "Choose a time after signing in; reception confirms your request."}
+        </p>
         <Button asChild className="mt-4 w-full"><Link href={bookHref(doctor.id)}>Book appointment</Link></Button>
         <p className="mt-2 text-center text-xs text-muted-foreground">New here? You can create an account on the next screen.</p>
       </aside>

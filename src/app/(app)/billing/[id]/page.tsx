@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { ErrorState } from "@/components/shared/error-state";
 import { StatusBadge } from "@/components/shared/status-badge";
-import { Logo } from "@/components/shared/logo";
+import { ClinicLetterhead, InvoiceFooterNote } from "@/components/shared/clinic-letterhead";
 import { RecordPaymentDialog } from "@/components/billing/record-payment-dialog";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { useLiveData } from "@/lib/data-source";
@@ -62,14 +62,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       </div>
 
       <div className="mx-auto max-w-2xl rounded-xl border bg-card p-6 print:max-w-none print:rounded-none print:border-0 sm:p-8">
-        <div className="flex items-start justify-between border-b pb-4">
-          <Logo size="sm" />
-          <div className="text-right text-sm text-muted-foreground">
-            <p>{branch.name}</p>
-            <p>{branch.address}</p>
-            <p>{branch.phone}</p>
-          </div>
-        </div>
+        <ClinicLetterhead kind="invoice" branch={branch} />
 
         <div className="mt-4 flex flex-wrap items-start justify-between gap-3 border-b pb-4 text-sm">
           <div>
@@ -138,6 +131,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             )}
           </TableFooter>
         </Table>
+        <InvoiceFooterNote />
       </div>
 
       {invoice.payments && invoice.payments.length > 0 && (

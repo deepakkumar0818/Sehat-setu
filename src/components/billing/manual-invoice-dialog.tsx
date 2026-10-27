@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PatientCombobox } from "@/components/patients/patient-combobox";
 import { useCreateManualInvoice } from "@/hooks/use-billing";
+import { useClinicSettings } from "@/hooks/use-clinic-admin";
 import { useDataStore } from "@/store/data-store";
 import { useLiveData } from "@/lib/data-source";
 import { formatCurrency } from "@/lib/format";
@@ -55,6 +56,8 @@ export function ManualInvoiceDialog({ open, onOpenChange, patientId, branchId, o
   const live = useLiveData();
   const patients = useDataStore((s) => s.db.patients);
   const createInvoice = useCreateManualInvoice();
+  // The clinic's default tax rate (Settings → Billing); staff can change it on each bill.
+  const defaultTax = useClinicSettings({ enabled: live }).data?.settings.defaultTaxPercent ?? 0;
   const [selectedPatientId, setSelectedPatientId] = useState(patientId ?? "");
   const needsPatientPicker = !patientId;
   const { register, control, handleSubmit, watch, reset, formState: { errors } } = useForm<InvoiceFormValues>({
@@ -70,10 +73,10 @@ export function ManualInvoiceDialog({ open, onOpenChange, patientId, branchId, o
 
   useEffect(() => {
     if (open) {
-      reset({ items: [{ description: "Consultation fee", category: "consultation", quantity: 1, unitPrice: 500 }], discount: 0, taxRate: 0 });
+      reset({ items: [{ description: "Consultation fee", category: "consultation", quantity: 1, unitPrice: 500 }], discount: 0, taxRate: defaultTax });
       setSelectedPatientId(patientId ?? "");
     }
-  }, [open, patientId, reset]);
+  }, [open, patientId, reset, defaultTax]);
 
   const subtotal = values.items?.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.unitPrice) || 0), 0) ?? 0;
   // Preview only, using the same rule as the server (tax on the discounted amount); the server recomputes every total.

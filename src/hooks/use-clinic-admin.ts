@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { liveApi } from "@/lib/live-api";
-import type { AuditArea, BranchInput, ClinicProfileInput, DepartmentInput, ExpenseInput, LabTestCategory, LiveDepartment, LiveExpenseCategory, LiveLabTest } from "@/lib/live-types";
+import type { AuditArea, BranchInput, ClinicProfileInput, ClinicSettings, DepartmentInput, ExpenseInput, LabTestCategory, LiveDepartment, LiveExpenseCategory, LiveLabTest } from "@/lib/live-types";
 import type { Branch, UserRole } from "@/types";
 
 // Clinic-admin screens in the live staff app (clinic database only): branches,
@@ -14,6 +14,7 @@ const keys = {
   clinicUsers: ["clinic-users", "live"] as const,
   specialties: ["specialties", "usage", "live"] as const,
   clinic: ["clinic", "live"] as const,
+  settings: ["clinic", "settings", "live"] as const,
   audit: ["audit-events", "live"] as const,
   expenses: ["expenses", "live"] as const,
 };
@@ -155,6 +156,23 @@ export function useClinicProfile() {
 export function useUpdateClinicProfile() {
   const invalidate = useInvalidateSetup();
   return useMutation({ mutationFn: (patch: Partial<ClinicProfileInput>) => liveApi.clinic.update(patch), onSuccess: invalidate });
+}
+
+/** Timings, booking rules, billing and branding. Also read when printing bills and prescriptions. */
+export function useClinicSettings({ enabled = true }: { enabled?: boolean } = {}) {
+  return useQuery({ queryKey: keys.settings, queryFn: liveApi.clinic.settings, enabled, staleTime: 5 * 60_000 });
+}
+
+export function useUpdateClinicSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Partial<ClinicSettings>) => liveApi.clinic.updateSettings(patch),
+    onSuccess: (page) => {
+      qc.setQueryData(keys.settings, page);
+      // Free slots depend on the timings.
+      for (const key of [keys.audit, ["availability"]]) qc.invalidateQueries({ queryKey: key });
+    },
+  });
 }
 
 // --- Audit log -------------------------------------------------------------------

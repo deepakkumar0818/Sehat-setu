@@ -11,13 +11,14 @@ import {
   appointmentStatusToUi,
   appointmentTypeFromUi,
   appointmentTypeToUi,
-  defaultSlotsFor,
   invoiceStatusToPayment,
   istToInstant,
   REVIEW_STATUSES,
   type DbAppointmentStatus,
   type DbAppointmentType,
 } from "./mappers";
+import { slotTimesFor } from "@/lib/clinic-hours";
+import { loadClinicSettings } from "./clinic-settings";
 import { pageArgs, runScoped, type Page } from "./scope";
 
 // Appointments — branch-scoped. careScope "clinic" sees the (branch-filtered)
@@ -184,7 +185,7 @@ export async function getWaitingRoom(ctx: TenantContext, branchId: string | unde
   });
 }
 
-/** Free slots for a doctor on an IST date, using the clinic's standard hours (see DEFAULT_WEEKLY_HOURS). */
+/** Free slots for a doctor on an IST date, from the clinic's timings (Settings). */
 export async function getAvailableSlots(ctx: TenantContext, doctorId: string, date: string, db?: TenantTx, now = new Date()): Promise<string[]> {
   if (!isoDate.safeParse(date).success || !z.string().uuid().safeParse(doctorId).success) throw new DataError("INVALID_INPUT", "Invalid doctor or date.");
   const dayStart = istToInstant(date, "00:00");
@@ -193,9 +194,13 @@ export async function getAvailableSlots(ctx: TenantContext, doctorId: string, da
     if (!doctor) throw new AuthError("NOT_FOUND");
     // Every active booking for this doctor counts — not just ones this user can see —
     // so a branch-restricted user is never offered a slot that's taken elsewhere.
-    const taken = await busySlots(tx, doctorId, dayStart, new Date(dayStart.getTime() + 864e5));
-    const takenTimes = new Set(taken.map((t) => istDayKey(t).time));
-    return defaultSlotsFor(date).filter((t) => !takenTimes.has(t) && istToInstant(date, t) > now);
+    const settings = await loadClinicSettings(tx, ctx.clinicId);
+    const busy = await busyRanges(tx, doctorId, dayStart, new Date(dayStart.getTime() + 864e5));
+    return slotTimesFor(date, settings).filter((t) => {
+      const start = istToInstant(date, t).getTime();
+      const end = start + settings.slotMinutes * 60_000;
+      return start > now.getTime() && !busy.some((b) => b.start.getTime() < end && b.end.getTime() > start);
+    });
   });
 }
 
@@ -211,19 +216,25 @@ export const createAppointmentSchema = z.object({
 });
 
 /**
- * Busy start times for a doctor, across ALL branches and bookings — via the
- * app.doctor_busy_slots() SECURITY DEFINER function, which reveals only times
- * (never patients) and only for doctors of the caller's own clinic.
+ * A doctor's booked time overlapping [from, to), across ALL branches and
+ * bookings — via the app.doctor_busy_ranges() SECURITY DEFINER function, which
+ * reveals only times (never patients) and only for doctors of the caller's own
+ * clinic. `exceptId`: the appointment being moved, which doesn't block itself.
  */
-async function busySlots(tx: TenantTx, doctorId: string, from: Date, to: Date): Promise<Date[]> {
-  const rows = await tx.$queryRaw<{ starts_at: Date }[]>`SELECT app.doctor_busy_slots(${doctorId}::uuid, ${from}, ${to}) AS starts_at`;
-  return rows.map((r) => r.starts_at);
+async function busyRanges(tx: TenantTx, doctorId: string, from: Date, to: Date, exceptId: string | null = null): Promise<{ start: Date; end: Date }[]> {
+  const rows = await tx.$queryRaw<{ starts_at: Date; ends_at: Date }[]>`
+    SELECT starts_at, ends_at FROM app.doctor_busy_ranges(${doctorId}::uuid, ${from}, ${to}, ${exceptId}::uuid)`;
+  return rows.map((r) => ({ start: r.starts_at, end: r.ends_at }));
 }
 
-/** Prevents two concurrent bookings of the same doctor and start time. */
-async function lockSlot(tx: TenantTx, doctorId: string, startsAt: Date) {
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`slot:${doctorId}:${startsAt.toISOString()}`}))`;
-  const busy = await busySlots(tx, doctorId, startsAt, new Date(startsAt.getTime() + 60_000));
+/**
+ * Prevents two concurrent bookings of a doctor that overlap: the same lock as
+ * the patient and approval paths (app.lock_doctor_slot: per start time and per
+ * doctor-day), then the time span checked under it.
+ */
+async function lockSlot(tx: TenantTx, doctorId: string, startsAt: Date, minutes: number, exceptId: string | null = null) {
+  await tx.$executeRaw`SELECT app.lock_doctor_slot(${doctorId}::uuid, ${startsAt})`;
+  const busy = await busyRanges(tx, doctorId, startsAt, new Date(startsAt.getTime() + minutes * 60_000), exceptId);
   if (busy.length > 0) throw new DataError("SLOT_TAKEN", "That doctor already has an appointment at this time. Pick another slot.");
 }
 
@@ -256,7 +267,10 @@ export async function createAppointment(ctx: TenantContext, raw: unknown, db?: T
     if (!branchId || !doctorBranches.includes(branchId)) throw new DataError("INVALID_INPUT", "That doctor doesn't work at the selected branch.");
     assertBranchAccess(ctx, branchId);
 
-    await lockSlot(tx, doctor.id, startsAt);
+    // Visits last one slot of the clinic's timings; a follow-up at most 15 minutes.
+    const { slotMinutes } = await loadClinicSettings(tx, ctx.clinicId);
+    const durationMinutes = input.type === "follow_up" ? Math.min(15, slotMinutes) : slotMinutes;
+    await lockSlot(tx, doctor.id, startsAt, durationMinutes);
     const row = await tx.appointment.create({
       data: {
         clinicId: ctx.clinicId,
@@ -264,7 +278,7 @@ export async function createAppointment(ctx: TenantContext, raw: unknown, db?: T
         patientId: patient.id,
         doctorId: doctor.id,
         startsAt,
-        durationMinutes: input.type === "follow_up" ? 15 : 30,
+        durationMinutes,
         type: appointmentTypeFromUi(input.type),
         status: "SCHEDULED",
         reason: input.reason,
@@ -324,7 +338,7 @@ export async function rescheduleAppointment(ctx: TenantContext, id: string, raw:
       throw new DataError("INVALID_TRANSITION", "Only appointments that haven't started can be rescheduled.");
     }
     // Only checked when the time changes, so the appointment's own current slot never counts against it.
-    if (current.startsAt.getTime() !== startsAt.getTime()) await lockSlot(tx, current.doctorId, startsAt);
+    if (current.startsAt.getTime() !== startsAt.getTime()) await lockSlot(tx, current.doctorId, startsAt, current.durationMinutes, current.id);
     await tx.appointment.update({ where: { id }, data: { startsAt, status: "SCHEDULED", checkedInAt: null, cancelledAt: null } });
     return (await describe(ctx, tx, [await loadOne(ctx, tx, id)]))[0];
   });

@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRecordPayment } from "@/hooks/use-billing";
+import { useClinicSettings } from "@/hooks/use-clinic-admin";
+import { useLiveData } from "@/lib/data-source";
 import { formatCurrency } from "@/lib/format";
 import type { Invoice, PaymentMethod } from "@/types";
 
@@ -20,9 +22,22 @@ export function RecordPaymentDialog({ open, onOpenChange, invoice }: { open: boo
   );
 }
 
+const METHODS: { value: PaymentMethod; label: string }[] = [
+  { value: "cash", label: "Cash" },
+  { value: "upi", label: "UPI" },
+  { value: "card", label: "Card" },
+  { value: "bank_transfer", label: "Bank Transfer" },
+  { value: "online", label: "Online" },
+];
+
 function PaymentForm({ invoice, onDone }: { invoice: Invoice; onDone: () => void }) {
+  const live = useLiveData();
+  // Only the methods the clinic accepts (Settings → Billing); the server re-checks.
+  const accepted = useClinicSettings({ enabled: live }).data?.settings.paymentMethods;
+  const methods = accepted ? METHODS.filter((m) => accepted.includes(m.value)) : METHODS;
   const [amount, setAmount] = useState(invoice.balance);
-  const [method, setMethod] = useState<PaymentMethod>("cash");
+  const [method, setMethod] = useState<PaymentMethod>(methods[0]?.value ?? "cash");
+  const selected = methods.some((m) => m.value === method) ? method : (methods[0]?.value ?? "cash");
   const [reference, setReference] = useState("");
   const recordPayment = useRecordPayment();
 
@@ -30,7 +45,7 @@ function PaymentForm({ invoice, onDone }: { invoice: Invoice; onDone: () => void
   const handleSave = () => {
     if (amount <= 0 || amount > invoice.balance) return;
     recordPayment.mutate(
-      { invoiceId: invoice.id, amount, method, reference: reference.trim() || undefined },
+      { invoiceId: invoice.id, amount, method: selected, reference: reference.trim() || undefined },
       { onSuccess: () => { toast.success("Payment recorded."); onDone(); } }
     );
   };
@@ -48,14 +63,10 @@ function PaymentForm({ invoice, onDone }: { invoice: Invoice; onDone: () => void
         </div>
         <div className="space-y-1.5">
           <Label>Payment method</Label>
-          <Select value={method} onValueChange={(v) => setMethod(v as PaymentMethod)}>
+          <Select value={selected} onValueChange={(v) => setMethod(v as PaymentMethod)}>
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="cash">Cash</SelectItem>
-              <SelectItem value="upi">UPI</SelectItem>
-              <SelectItem value="card">Card</SelectItem>
-              <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-              <SelectItem value="online">Online</SelectItem>
+              {methods.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>

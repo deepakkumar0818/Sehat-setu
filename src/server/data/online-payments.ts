@@ -14,6 +14,7 @@ import {
   verifyWebhookSignature,
 } from "@/server/payments/razorpay";
 import type { CheckoutOptions, OnlinePaymentResult, RefundAttention } from "@/lib/live-types";
+import { patientCanPayOnline } from "./clinic-settings";
 import { runPatientScoped, runScoped } from "./scope";
 
 // Patient online payments (migration 20261031000100). Flow:
@@ -94,9 +95,11 @@ export async function startPatientPayment(ctx: PatientContext, raw: unknown, db?
   const config = configOrUnavailable();
   const input = startPaymentSchema.parse(raw);
   const purpose = DB_PURPOSE[input.purpose];
-  const due = await runPatientScoped(ctx, db, (tx) =>
-    sql(async () => (await tx.$queryRaw<{ amount_paise: number; label: string }[]>`SELECT amount_paise, label FROM app.online_payable(${purpose}, ${input.id}::uuid)`)[0])
-  );
+  const due = await runPatientScoped(ctx, db, async (tx) => {
+    // The clinic may take payments at the counter only (Settings → Online booking).
+    if (!(await patientCanPayOnline(tx))) throw new DataError("FEATURE_UNAVAILABLE", "This clinic takes payments at the clinic only.");
+    return sql(async () => (await tx.$queryRaw<{ amount_paise: number; label: string }[]>`SELECT amount_paise, label FROM app.online_payable(${purpose}, ${input.id}::uuid)`)[0]);
+  });
   let orderId: string;
   try {
     // Notes: ids only — never names or anything medical.

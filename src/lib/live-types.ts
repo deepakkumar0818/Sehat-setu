@@ -415,6 +415,8 @@ export interface PortalBookingOptions {
   doctors: PortalBookingDoctor[];
   /** The booking window the server enforces (days ahead). */
   maxDaysAhead: number;
+  /** The clinic's rules (the database re-checks them on every booking). */
+  rules: { open: boolean; needsApproval: boolean; minNoticeMinutes: number; maxUpcoming: number; slotMinutes: number };
 }
 
 export interface PortalInvoice {
@@ -591,6 +593,67 @@ export interface ClinicProfile {
 
 export type ClinicProfileInput = Pick<ClinicProfile, "name" | "email" | "phone" | "addressLine" | "city" | "state" | "pincode">;
 
+// --- Clinic settings (Settings page) ------------------------------------------------
+
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+/** Opening hours of one weekday (IST, "HH:MM"), or null when closed. */
+export type DayHours = { open: string; close: string } | null;
+export type WeeklyHours = Record<Weekday, DayHours>;
+
+/** Clinic timings: when patients can be booked (staff may still book any time). */
+export interface ClinicTimings {
+  weeklyHours: WeeklyHours;
+  /** One daily break, e.g. lunch ("HH:MM"), or both null. */
+  breakStart: string | null;
+  breakEnd: string | null;
+  slotMinutes: 10 | 15 | 20 | 30 | 45 | 60;
+}
+
+/** Patient portal booking rules (enforced by the database's booking functions). */
+export interface BookingRules {
+  onlineBookingEnabled: boolean;
+  /** true: a booking is a request reception approves; false: confirmed at once. */
+  bookingNeedsApproval: boolean;
+  bookingMinNoticeMinutes: number;
+  bookingMaxDaysAhead: number;
+  bookingMaxUpcoming: number;
+  /** Patients may pay bills and booking fees online (when online payments are set up). */
+  patientOnlinePayments: boolean;
+}
+
+export interface BillingSettings {
+  /** Null: "<clinic code>-INV-". */
+  invoicePrefix: string | null;
+  gstin: string | null;
+  /** Offered on new manual bills; staff can change it per bill. */
+  defaultTaxPercent: number;
+  /** Printed at the bottom of every bill. */
+  invoiceFooter: string | null;
+  /** Methods reception may record a payment with. */
+  paymentMethods: ("cash" | "upi" | "card" | "bank_transfer" | "online")[];
+}
+
+export interface BrandingSettings {
+  /** data:image/(png|jpeg|webp);base64,… */
+  logoDataUrl: string | null;
+  /** "#rrggbb" accent on bills and prescriptions. */
+  brandColor: string | null;
+  website: string | null;
+  /** Clinic establishment / registration number. */
+  registrationNumber: string | null;
+}
+
+export type ClinicSettings = ClinicTimings & BookingRules & BillingSettings & BrandingSettings;
+
+export interface ClinicSettingsPage {
+  clinic: { name: string; code: string };
+  settings: ClinicSettings;
+  /** The prefix used when invoicePrefix is null. */
+  defaultInvoicePrefix: string;
+  /** Clinic-wide administrators (clinic.settings.manage). */
+  canEdit: boolean;
+}
+
 // --- Audit log -----------------------------------------------------------------
 
 export interface AuditEntry {
@@ -731,8 +794,20 @@ export interface PublicDirectoryBranch {
   phone: string;
 }
 
+export interface PublicDirectoryClinic {
+  id: string;
+  name: string;
+  city: string;
+  phone: string;
+  /** The clinic's opening hours (Settings → Clinic timings); absent before clinic settings existed. */
+  hours?: WeeklyHours | null;
+  /** Takes online bookings, and whether reception approves them. */
+  onlineBooking?: boolean;
+  needsApproval?: boolean;
+}
+
 export interface PublicDirectory {
-  clinics: { id: string; name: string; city: string; phone: string }[];
+  clinics: PublicDirectoryClinic[];
   branches: PublicDirectoryBranch[];
   doctors: PublicDirectoryDoctor[];
 }

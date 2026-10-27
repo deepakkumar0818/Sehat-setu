@@ -3,6 +3,8 @@
 // Nothing here invents clinical or business values: fields the database
 // doesn't hold are left empty/null, never filled with sample data.
 import { AVATAR_COLORS } from "@/data/pools";
+import { DEFAULT_TIMINGS, slotTimesFor, WEEKDAYS } from "@/lib/clinic-hours";
+import type { WeeklyHours } from "@/lib/live-types";
 import { istDayKey } from "@/lib/ist";
 import type { AppointmentStatus, AppointmentType, Doctor, DoctorAvailabilitySlot, Gender, Patient, PaymentStatus } from "@/types";
 
@@ -86,15 +88,9 @@ export const DEFAULT_WEEKLY_HOURS: DoctorAvailabilitySlot[] = (["Mon", "Tue", "W
   end: "17:00",
 }));
 
+/** Slots under the default timings (a clinic's own come from Settings: slotTimesFor). */
 export function defaultSlotsFor(dateIso: string): string[] {
-  const day = new Date(`${dateIso}T00:00:00Z`).getUTCDay(); // calendar weekday of the IST date
-  if (day === 0) return [];
-  const slots: string[] = [];
-  for (let m = 9 * 60; m < 17 * 60; m += 30) {
-    if (m >= 13 * 60 && m < 14 * 60) continue;
-    slots.push(`${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`);
-  }
-  return slots;
+  return slotTimesFor(dateIso, DEFAULT_TIMINGS);
 }
 
 // --- records -------------------------------------------------------------------
@@ -163,7 +159,16 @@ export interface DbDoctorRow {
   branches: { branchId: string; isPrimary: boolean }[];
 }
 
-export function toUiDoctor(row: DbDoctorRow): Doctor {
+/** The clinic's open days as the UI's weekly availability ("Mon" 09:00–17:00, …). */
+export function availabilityFrom(hours: WeeklyHours): DoctorAvailabilitySlot[] {
+  return WEEKDAYS.flatMap((d) => {
+    const h = hours[d];
+    return h ? [{ day: (d[0].toUpperCase() + d.slice(1)) as DoctorAvailabilitySlot["day"], start: h.open, end: h.close }] : [];
+  });
+}
+
+/** `availability`: the clinic's timings (every doctor books on them); the defaults when not given. */
+export function toUiDoctor(row: DbDoctorRow, availability: DoctorAvailabilitySlot[] = DEFAULT_WEEKLY_HOURS): Doctor {
   const primary = row.branches.find((b) => b.isPrimary) ?? row.branches[0];
   return {
     id: row.id,
@@ -184,7 +189,7 @@ export function toUiDoctor(row: DbDoctorRow): Doctor {
     rating: null, // no ratings are stored
     avatarColor: avatarColorFor(row.id),
     bio: row.bio ?? "",
-    availability: DEFAULT_WEEKLY_HOURS,
+    availability,
     joinedDate: istDayKey(row.createdAt).date,
   };
 }

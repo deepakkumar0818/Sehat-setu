@@ -137,6 +137,7 @@ const TABLE_AREA: Record<string, AuditArea> = {
   departments: "setup",
   lab_test_types: "setup",
   specialties: "setup",
+  clinic_settings: "setup",
   clinics: "setup",
 };
 
@@ -182,6 +183,7 @@ const NOUN: Record<string, string> = {
   departments: "a department",
   lab_test_types: "a lab test",
   specialties: "a specialty",
+  clinic_settings: "the clinic settings",
   clinics: "the clinic profile",
 };
 

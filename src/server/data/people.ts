@@ -6,7 +6,8 @@ import { DataError } from "@/server/api/errors";
 import type { TenantTx } from "@/server/db/tenant";
 import type { Branch, Doctor, StaffMember, StaffRole } from "@/types";
 import type { StaffCapabilities } from "@/lib/live-types";
-import { avatarColorFor, ROLE_KEY_TO_STAFF_ROLE, toUiDoctor, type DbDoctorRow } from "./mappers";
+import { availabilityFrom, avatarColorFor, ROLE_KEY_TO_STAFF_ROLE, toUiDoctor, type DbDoctorRow } from "./mappers";
+import { loadClinicSettings } from "./clinic-settings";
 import { pageArgs, runScoped, type Page } from "./scope";
 import { invitationsReady, staffPhoneEditReady } from "./p5-schema";
 import { featureUnavailable } from "./invitation-rules";
@@ -60,7 +61,8 @@ export async function listDoctors(
       tx.doctorProfile.count({ where }),
     ]);
     const capabilities = { canInviteDoctors, invitationsReady: canInviteDoctors ? await invitationsReady(tx) : false };
-    return { items: rows.map((r) => toUiDoctor(r as DbDoctorRow)), total, page, pageSize, capabilities };
+    const availability = availabilityFrom((await loadClinicSettings(tx, ctx.clinicId)).weeklyHours);
+    return { items: rows.map((r) => toUiDoctor(r as DbDoctorRow, availability)), total, page, pageSize, capabilities };
   });
 }
 
@@ -68,7 +70,8 @@ export async function getDoctor(ctx: TenantContext, id: string, db?: TenantTx): 
   if (!z.string().uuid().safeParse(id).success) throw new AuthError("NOT_FOUND");
   return runScoped(ctx, db, async (tx) => {
     const row = await tx.doctorProfile.findFirst({ where: { id, clinicId: ctx.clinicId }, select: doctorSelect });
-    return toUiDoctor(assertRecordAccess({ ...ctx, branchId: null }, row) as DbDoctorRow);
+    const availability = availabilityFrom((await loadClinicSettings(tx, ctx.clinicId)).weeklyHours);
+    return toUiDoctor(assertRecordAccess({ ...ctx, branchId: null }, row) as DbDoctorRow, availability);
   });
 }
 

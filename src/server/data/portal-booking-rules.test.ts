@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { AuthError } from "@/server/auth/errors";
 import { DataError } from "@/server/api/errors";
 import {
-  MAX_DAYS_AHEAD,
   appointmentReference,
   bookableSlots,
   bookingSchema,
@@ -13,6 +12,7 @@ import {
   scopeFilter,
 } from "./portal-booking-rules";
 import { istToInstant } from "./mappers";
+import { DEFAULT_SETTINGS } from "./clinic-settings-rules";
 
 // Pure booking rules (mirroring app.patient_* in migration 20261028000000):
 // what slots a patient is offered, what they may change, what the browser may
@@ -23,24 +23,36 @@ const BRANCH = "11111111-1111-4111-8111-111111111111";
 const DOCTOR = "22222222-2222-4222-8222-222222222222";
 
 describe("bookableSlots", () => {
-  it("offers the clinic's standard grid (no lunch, no Sundays)", () => {
-    const slots = bookableSlots("2026-10-21", new Set(), NOW);
+  const S = DEFAULT_SETTINGS;
+  const busy = (date: string, from: string, minutes: number) => ({ start: istToInstant(date, from), end: new Date(istToInstant(date, from).getTime() + minutes * 60_000) });
+
+  it("offers the clinic's standard grid by default (no lunch, no Sundays)", () => {
+    const slots = bookableSlots("2026-10-21", [], NOW, S);
     expect(slots[0]).toBe("09:00");
     expect(slots.at(-1)).toBe("16:30");
     expect(slots).not.toContain("13:00");
     expect(slots).not.toContain("13:30");
     expect(slots).toHaveLength(14);
-    expect(bookableSlots("2026-10-25", new Set(), NOW)).toEqual([]); // Sunday
+    expect(bookableSlots("2026-10-25", [], NOW, S)).toEqual([]); // Sunday
   });
 
-  it("hides taken slots and anything sooner than 30 minutes or beyond the booking window", () => {
-    const today = bookableSlots("2026-10-20", new Set(["11:00"]), NOW);
+  it("hides booked time and anything sooner than the notice or beyond the booking window", () => {
+    const today = bookableSlots("2026-10-20", [busy("2026-10-20", "11:00", 30)], NOW, S);
     // 10:05 + 30 min = 10:35: 10:30 is too soon, 11:00 is taken → first offer 11:30.
     expect(today[0]).toBe("11:30");
     expect(today).not.toContain("10:30");
     expect(today).not.toContain("11:00");
-    const far = new Date(NOW.getTime() + (MAX_DAYS_AHEAD + 2) * 864e5).toISOString().slice(0, 10);
-    expect(bookableSlots(far, new Set(), NOW)).toEqual([]);
+    const far = new Date(NOW.getTime() + (S.bookingMaxDaysAhead + 2) * 864e5).toISOString().slice(0, 10);
+    expect(bookableSlots(far, [], NOW, S)).toEqual([]);
+    expect(bookableSlots("2026-10-21", [], NOW, { ...S, bookingMaxDaysAhead: 0 })).toEqual([]);
+  });
+
+  it("follows the clinic's timings and checks overlaps, not just equal start times", () => {
+    const custom = { ...S, slotMinutes: 20 as const, breakStart: null, breakEnd: null, weeklyHours: { ...S.weeklyHours, wed: { open: "10:00", close: "12:00" } } };
+    // A 30-minute visit booked at 10:00 (before the change) blocks 10:00 and 10:20.
+    expect(bookableSlots("2026-10-21", [busy("2026-10-21", "10:00", 30)], NOW, custom)).toEqual(["10:40", "11:00", "11:20", "11:40"]);
+    expect(bookableSlots("2026-10-21", [], NOW, { ...custom, onlineBookingEnabled: false })).toEqual([]);
+    expect(bookableSlots("2026-10-20", [], NOW, { ...S, bookingMinNoticeMinutes: 2880 })).toEqual([]);
   });
 });
 
@@ -88,6 +100,7 @@ describe("mapBookingDbError", () => {
     expect(code("patient booking: INVALID_SLOT")).toBe("INVALID_INPUT");
     expect(code("patient booking: NOT_CHANGEABLE")).toBe("INVALID_TRANSITION");
     expect(code("patient booking: ONLINE_UNAVAILABLE")).toBe("INVALID_INPUT");
+    expect(code("patient booking: CLOSED")).toBe("FEATURE_UNAVAILABLE");
     // Another patient's appointment and an unknown one look the same.
     expect(code("patient booking: NOT_FOUND")).toBe("NOT_FOUND");
     expect(code("patient booking: NOT_PERMITTED")).toBe("FORBIDDEN");

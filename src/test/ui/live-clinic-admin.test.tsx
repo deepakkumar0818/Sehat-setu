@@ -4,7 +4,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LiveDataProvider } from "@/lib/data-source";
-import type { AuditPage, ClinicProfile, DepartmentPage, ExpensePage, LiveExpense } from "@/lib/live-types";
+import type { AuditPage, ClinicProfile, ClinicSettings, ClinicSettingsPage, DepartmentPage, ExpensePage, LiveExpense } from "@/lib/live-types";
+import { DEFAULT_SETTINGS } from "@/server/data/clinic-settings-rules";
 import type { Branch } from "@/types";
 
 // Clinic-admin pages in the live staff app, in a simulated browser: they read
@@ -22,7 +23,7 @@ const api = vi.hoisted(() => ({
   branches: { list: vi.fn(), create: vi.fn(), update: vi.fn(), setStatus: vi.fn() },
   departments: { list: vi.fn(), create: vi.fn(), update: vi.fn(), setStatus: vi.fn() },
   specialties: { list: vi.fn(), usage: vi.fn() },
-  clinic: { get: vi.fn(), update: vi.fn() },
+  clinic: { get: vi.fn(), update: vi.fn(), settings: vi.fn(), updateSettings: vi.fn() },
   auditEvents: vi.fn(),
   expenses: { list: vi.fn(), create: vi.fn(), void: vi.fn() },
   billing: { summary: vi.fn() },
@@ -48,6 +49,9 @@ const profile = (over: Partial<ClinicProfile> = {}): ClinicProfile => ({
   currency: "INR", status: "active", canEdit: true, can: { createBranch: true, updateBranch: true, manageDepartments: true },
   usage: { branches: 2, activeBranches: 2, staff: 1, doctors: 0, patients: 0 }, ...over,
 });
+const settingsPage = (canEdit = true, over: Partial<ClinicSettings> = {}): ClinicSettingsPage => ({
+  clinic: { name: "Aarogya Clinic", code: "AAR" }, settings: { ...DEFAULT_SETTINGS, ...over }, defaultInvoicePrefix: "AAR-INV-", canEdit,
+});
 const expense = (over: Partial<LiveExpense> = {}): LiveExpense => ({
   id: "e1", branchId: "b1", branchName: "Kothrud", category: "rent", description: "October rent", amount: 25000, date: "2026-10-01", paidTo: "Landlord", reference: null,
   status: "recorded", voidReason: null, recordedBy: "Admin", createdAt: "2026-10-01T05:00:00.000Z", ...over,
@@ -61,6 +65,8 @@ beforeEach(() => {
   document.body.appendChild(host);
   root = createRoot(host);
   api.clinic.get.mockResolvedValue(profile());
+  api.clinic.settings.mockResolvedValue(settingsPage());
+  api.clinic.updateSettings.mockImplementation(async (patch: Partial<ClinicSettings>) => settingsPage(true, patch));
   api.branches.list.mockResolvedValue([branch(), branch({ id: "b2", name: "Wakad", code: "WKD", isHeadOffice: false })]);
   api.specialties.usage.mockResolvedValue({ items: [{ id: "s1", name: "General Medicine", description: null, doctorCount: 0, departmentCount: 1 }, { id: "s2", name: "Dermatology", description: null, doctorCount: 0, departmentCount: 0 }] });
   api.billing.summary.mockResolvedValue({ todaysRevenue: 0, outstandingBalance: 0, totalRevenueThisMonth: 30000, totalExpensesThisMonth: 25000 });
@@ -86,6 +92,13 @@ const button = (label: string | RegExp) => {
 };
 const click = async (el: HTMLElement) => {
   await act(async () => el.click());
+  await settle();
+};
+/** Radix tabs switch on mouse down. */
+const openTab = async (label: string) => {
+  const tab = [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent?.trim() === label);
+  if (!tab) throw new Error(`no tab ${label}`);
+  await act(async () => { tab.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })); });
   await settle();
 };
 async function type(input: HTMLInputElement | HTMLTextAreaElement, value: string) {
@@ -179,23 +192,68 @@ describe("live audit log, expenses, settings and plan", () => {
     expect(api.expenses.void).toHaveBeenCalledWith("e1", "Entered twice");
   });
 
-  it("settings: saves only changed clinic fields; booking rules are read-only facts, not switches", async () => {
+  it("settings: the clinic profile saves only changed fields", async () => {
     api.clinic.update.mockImplementation(async (patch: Partial<ClinicProfile>) => profile(patch));
     await render(<LiveSettings />);
-    expect(document.querySelectorAll('[role="switch"]')).toHaveLength(0);
-    expect(text()).toContain("Monday to Saturday, 9:00 AM – 5:00 PM");
-    const save = button("Save changes") as HTMLButtonElement;
+    const save = button("Save changes") as HTMLButtonElement; // the profile form's, first on the page
     expect(save.disabled).toBe(true);
     await type(document.getElementById("clinic-city") as HTMLInputElement, "Mumbai");
-    await click(button("Save changes"));
+    await click(save);
     expect(api.clinic.update).toHaveBeenCalledWith({ city: "Mumbai" });
+    expect(api.clinic.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("settings: timings send only what changed, and the preview shows the resulting slots", async () => {
+    await render(<LiveSettings />);
+    await openTab("Clinic timings");
+    expect(text()).toContain("14 slots of 30 minutes");
+    expect(text()).toContain("Mon–Sat: 9:00 AM – 5:00 PM · Sun: Closed");
+    await click(document.getElementById("open-sun") as HTMLElement);
+    await click(button("Save changes"));
+    expect(api.clinic.updateSettings).toHaveBeenCalledWith({ weeklyHours: { ...DEFAULT_SETTINGS.weeklyHours, sun: { open: "09:00", close: "17:00" } } });
+  });
+
+  it("settings: turning the break off sends both of its ends", async () => {
+    await render(<LiveSettings />);
+    await openTab("Clinic timings");
+    await click(document.getElementById("has-break") as HTMLElement);
+    expect(text()).toContain("16 slots of 30 minutes");
+    await click(button("Save changes"));
+    expect(api.clinic.updateSettings).toHaveBeenCalledWith({ breakStart: null, breakEnd: null });
+  });
+
+  it("settings: online booking rules are real switches saved to the clinic", async () => {
+    await render(<LiveSettings />);
+    await openTab("Online booking");
+    await click(document.getElementById("bk-approve") as HTMLElement);
+    expect(text()).toContain("Bookings are confirmed straight away");
+    await click(button("Save changes"));
+    expect(api.clinic.updateSettings).toHaveBeenCalledWith({ bookingNeedsApproval: false });
+  });
+
+  it("settings: billing shows the resulting invoice numbers and checks the GSTIN before saving", async () => {
+    await render(<LiveSettings />);
+    await openTab("Billing & invoices");
+    expect(text()).toContain("AAR-INV-0001");
+    await type(document.getElementById("bill-prefix") as HTMLInputElement, "aar/26-");
+    expect(text()).toContain("AAR/26-0001");
+    await type(document.getElementById("bill-gstin") as HTMLInputElement, "27ABC");
+    expect(text()).toContain("Enter a valid 15-character GSTIN");
+    expect((button("Save changes") as HTMLButtonElement).disabled).toBe(true);
+    await type(document.getElementById("bill-gstin") as HTMLInputElement, "27ABCDE1234F1Z5");
+    await click(button("Save changes"));
+    expect(api.clinic.updateSettings).toHaveBeenCalledWith({ invoicePrefix: "AAR/26-", gstin: "27ABCDE1234F1Z5" });
   });
 
   it("settings: read-only for someone who can't edit the clinic", async () => {
     api.clinic.get.mockResolvedValue(profile({ canEdit: false }));
+    api.clinic.settings.mockResolvedValue(settingsPage(false));
     await render(<LiveSettings />);
     expect((document.getElementById("clinic-name") as HTMLInputElement).disabled).toBe(true);
-    expect(text()).toContain("Only an administrator can change it.");
+    expect(text()).toContain("Only a clinic administrator can change them.");
+    expect(text()).not.toContain("Save changes");
+    await openTab("Online booking");
+    expect((document.getElementById("bk-on") as HTMLButtonElement).disabled).toBe(true);
     expect(text()).not.toContain("Save changes");
   });
 

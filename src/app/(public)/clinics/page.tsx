@@ -4,6 +4,7 @@ import { DemoClinicsPage } from "@/components/public/demo-clinics-page";
 import { EmptyState } from "@/components/shared/empty-state";
 import { isSupabaseAuthEnabled } from "@/lib/auth/config";
 import { tryPublicDirectory } from "@/server/data/public-directory";
+import { hoursLine } from "@/lib/clinic-hours";
 
 /** Live site: the clinic's real branches with their public contact details. */
 async function LiveClinicsPage() {
@@ -25,7 +26,7 @@ async function LiveClinicsPage() {
                 <p className="font-semibold text-foreground">{clinic ? `${clinic.name} — ${b.name}` : b.name}</p>
                 <p className="mt-2 flex items-start gap-1.5 text-sm text-muted-foreground"><MapPinIcon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> {b.address}, {b.city}</p>
                 <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground"><PhoneIcon className="h-4 w-4 shrink-0" aria-hidden /> {b.phone}</p>
-                <p className="mt-3 text-xs text-muted-foreground">{doctors} doctor{doctors === 1 ? "" : "s"} · Mon–Sat, 9:00 AM – 5:00 PM</p>
+                <p className="mt-3 text-xs text-muted-foreground">{doctors} doctor{doctors === 1 ? "" : "s"} · {hoursLine(clinic?.hours)}</p>
               </div>
             );
           })}

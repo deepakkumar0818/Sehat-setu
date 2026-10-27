@@ -58,6 +58,8 @@ import type {
   BranchInput,
   ClinicProfile,
   ClinicProfileInput,
+  ClinicSettings,
+  ClinicSettingsPage,
   DepartmentInput,
   DepartmentPage,
   LabTestCategory,
@@ -360,6 +362,8 @@ export const liveApi = {
   clinic: {
     get: () => apiGet<ClinicProfile>("/api/v1/clinic"),
     update: (patch: Partial<ClinicProfileInput>) => apiPatch<ClinicProfile>("/api/v1/clinic", patch),
+    settings: () => apiGet<ClinicSettingsPage>("/api/v1/clinic/settings"),
+    updateSettings: (patch: Partial<ClinicSettings>) => apiPatch<ClinicSettingsPage>("/api/v1/clinic/settings", patch),
   },
   auditEvents: (params: { area?: AuditArea; outcome?: "success" | "denied" | "failure"; search?: string; page?: number; pageSize?: number }) =>
     apiGet<AuditPage>("/api/v1/audit-events", params),

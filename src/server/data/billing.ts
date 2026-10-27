@@ -27,6 +27,8 @@ import {
   type DbPaymentMethod,
   type DbPaymentStatus,
 } from "./billing-math";
+import { acceptsMethod } from "./clinic-settings-rules";
+import { loadClinicSettings } from "./clinic-settings";
 import { pageArgs, runScoped, type Page } from "./scope";
 
 // Billing — invoices, line items and manually recorded payments, branch-scoped
@@ -430,6 +432,9 @@ export async function recordPayment(ctx: TenantContext, invoiceId: string, raw: 
     const invoice = await loadInvoice(ctx, tx, invoiceId);
     const paid = paidPaise(invoice.payments);
     rule(() => assertPayable(invoice.status, invoice.totalPaise, paid, input.amountPaise));
+    if (!acceptsMethod(await loadClinicSettings(tx, ctx.clinicId), input.method)) {
+      throw new DataError("INVALID_INPUT", "Your clinic doesn't take this payment method. An administrator can change it in Settings → Billing.");
+    }
     const method = paymentMethodFromUi(input.method);
     await tx.payment.create({
       data: { clinicId: ctx.clinicId, invoiceId, amountPaise: input.amountPaise, method, status: "SUCCEEDED", reference: input.reference || null, paidAt: now },
