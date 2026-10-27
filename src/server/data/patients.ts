@@ -16,6 +16,9 @@ import { pageArgs, runScoped, type Page } from "./scope";
 export const PATIENT_VIEW = ["patient.view", "patient.basic_info.view", "assigned_patients.view"] as const;
 const OPEN_STATUSES = ["SCHEDULED", "CONFIRMED"] as const;
 
+/** Blocking or deleting a patient: Administrators (user.disable). */
+export const PATIENT_ADMIN = ["user.disable"] as const;
+
 const patientSelect = {
   id: true, clinicId: true, branchId: true, patientNumber: true, name: true, dateOfBirth: true, gender: true, phone: true,
   email: true, bloodGroup: true, addressLine: true, city: true, allergies: true, chronicConditions: true,
@@ -86,7 +89,8 @@ export async function listPatients(ctx: TenantContext, input: z.infer<typeof lis
   return runScoped(ctx, db, async (tx) => {
     const [rows, total] = await Promise.all([tx.patient.findMany({ where, orderBy, skip, take, select: patientSelect }), tx.patient.count({ where })]);
     const facts = await visitFacts(tx, rows.map((r) => r.id), now);
-    return { items: rows.map((r) => toUiPatient(r, facts.get(r.id), now)), total, page, pageSize };
+    const canManageAccess = hasAnyPermission(ctx, PATIENT_ADMIN);
+    return { items: rows.map((r) => ({ ...toUiPatient(r, facts.get(r.id), now), canManageAccess })), total, page, pageSize };
   });
 }
 
@@ -95,7 +99,7 @@ export async function getPatient(ctx: TenantContext, id: string, db?: TenantTx, 
   return runScoped(ctx, db, async (tx) => {
     const row = assertRecordAccess({ ...ctx, branchId: null }, await tx.patient.findFirst({ where: { id, ...visibilityWhere(ctx) }, select: patientSelect }));
     const facts = await visitFacts(tx, [row.id], now);
-    return toUiPatient(row, facts.get(row.id), now);
+    return { ...toUiPatient(row, facts.get(row.id), now), canManageAccess: hasAnyPermission(ctx, PATIENT_ADMIN) };
   });
 }
 
@@ -209,5 +213,61 @@ export async function updatePatient(ctx: TenantContext, id: string, raw: unknown
     if (row.clinicId !== ctx.clinicId) throw new AuthError("NOT_FOUND");
     const facts = await visitFacts(tx, [row.id], now);
     return toUiPatient(row, facts.get(row.id), now);
+  });
+}
+
+const patientAccessSchema = z.object({ status: z.enum(["active", "blocked"]) }).strict();
+
+/**
+ * Block (or unblock) a patient: the record becomes inactive and their portal
+ * access to this clinic (the PATIENT membership) is switched off, so they can't
+ * sign in, book or see their records online. Nothing clinical is changed.
+ */
+export async function setPatientAccess(ctx: TenantContext, id: string, raw: unknown, db?: TenantTx, now = new Date()): Promise<Patient> {
+  requirePermission(ctx, PATIENT_ADMIN);
+  const { status } = patientAccessSchema.parse(raw);
+  await getPatient(ctx, id, db, now); // existence + visibility (NOT_FOUND otherwise)
+  const value = status === "active" ? "ACTIVE" : "INACTIVE";
+  return runScoped(ctx, db, async (tx) => {
+    const row = await tx.patient.update({ where: { id }, data: { status: value }, select: { ...patientSelect, userId: true } });
+    if (row.clinicId !== ctx.clinicId) throw new AuthError("NOT_FOUND");
+    if (row.userId) {
+      await tx.clinicMembership.updateMany({ where: { clinicId: ctx.clinicId, userId: row.userId, role: { key: "PATIENT" } }, data: { status: value } });
+    }
+    const facts = await visitFacts(tx, [row.id], now);
+    return { ...toUiPatient(row, facts.get(row.id), now), canManageAccess: true };
+  });
+}
+
+const PATIENT_ADMIN_ERRORS: Record<string, () => Error> = {
+  NOT_PERMITTED: () => new AuthError("FORBIDDEN"),
+  NOT_FOUND: () => new AuthError("NOT_FOUND"),
+};
+
+/**
+ * Permanently delete a patient with no appointments, bills, reports, documents
+ * or payments, through app.remove_patient (migration 20261108000000). Anyone
+ * with history can only be blocked: medical and billing records are kept.
+ */
+export async function removePatient(ctx: TenantContext, id: string, db?: TenantTx): Promise<{ id: string; removed: true }> {
+  requirePermission(ctx, PATIENT_ADMIN);
+  if (!z.string().uuid().safeParse(id).success) throw new AuthError("NOT_FOUND");
+  return runScoped(ctx, db, async (tx) => {
+    let result: string | undefined;
+    try {
+      [{ result } = { result: undefined }] = await tx.$queryRaw<{ result: string }[]>`SELECT app.remove_patient(${id}::uuid) AS result`;
+    } catch (err) {
+      const text = err instanceof Error ? `${err.message} ${JSON.stringify((err as { meta?: unknown }).meta ?? "")}` : "";
+      const code = /patient admin: ([A-Z_]+)/.exec(text)?.[1];
+      const mapped = code ? PATIENT_ADMIN_ERRORS[code] : undefined;
+      if (mapped) throw mapped();
+      if (/does not exist|42883/.test(text)) throw new DataError("FEATURE_UNAVAILABLE", "Deleting patients isn't set up on this clinic database yet.");
+      throw err;
+    }
+    if (result === "HAS_HISTORY") {
+      throw new DataError("CONFLICT", "This patient has appointments, bills, reports or documents, which must be kept. Block the patient instead.");
+    }
+    if (result !== "REMOVED") throw new Error("unexpected remove_patient result");
+    return { id, removed: true };
   });
 }

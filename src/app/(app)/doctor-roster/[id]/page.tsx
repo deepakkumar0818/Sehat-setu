@@ -1,6 +1,7 @@
 "use client";
 
 import { use } from "react";
+import { useRouter } from "next/navigation";
 import { MailIcon, PhoneIcon, StarIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +12,8 @@ import { StatCard } from "@/components/shared/stat-card";
 import { PersonAvatar } from "@/components/shared/person-avatar";
 import { AppointmentsTable } from "@/components/appointments/appointments-table";
 import { formatCurrency } from "@/lib/format";
-import { useDoctor } from "@/hooks/use-people";
+import { DoctorActions } from "@/components/doctors/doctor-actions";
+import { useDoctor, useDoctors } from "@/hooks/use-people";
 import { useTodaysAppointments } from "@/hooks/use-appointments";
 import { useBranches } from "@/hooks/use-branches";
 import { useLiveData } from "@/lib/data-source";
@@ -20,6 +22,10 @@ export default function DoctorDetailPage({ params }: { params: Promise<{ id: str
   const { id } = use(params);
   const { data: doctor, isLoading, isError, refetch } = useDoctor(id);
   const live = useLiveData();
+  const router = useRouter();
+  // Whether the viewer may suspend or delete doctors (Administrators): the list's capability flag.
+  const list = useDoctors({ pageSize: 1 }).data;
+  const canManage = live && Boolean(list && "capabilities" in list && (list.capabilities as { canManageDoctors?: boolean } | undefined)?.canManageDoctors);
   const branch = useBranches().find((b) => b.id === doctor?.branchId);
   // Live: every branch the viewer can see (the doctor may work at several); filtered to this doctor below.
   const today = useTodaysAppointments(live ? undefined : doctor?.branchId);
@@ -40,7 +46,7 @@ export default function DoctorDetailPage({ params }: { params: Promise<{ id: str
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-xl font-semibold text-foreground">{doctor.name}</h1>
-                <StatusBadge status={doctor.status} />
+                <StatusBadge status={doctor.status} label={doctor.status === "inactive" ? "Suspended" : undefined} />
               </div>
               <p className="text-sm text-muted-foreground">{doctor.qualifications}</p>
               <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
@@ -52,10 +58,13 @@ export default function DoctorDetailPage({ params }: { params: Promise<{ id: str
               <p className="mt-2 max-w-xl text-sm text-muted-foreground">{doctor.bio}</p>
             </div>
           </div>
-          <div className="text-right">
-            <p className="text-xs text-muted-foreground">Consultation fee</p>
-            <p className="text-lg font-semibold text-foreground">{formatCurrency(doctor.consultationFee)}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{branch?.name}</p>
+          <div className="flex items-start gap-2">
+            <div className="text-right">
+              <p className="text-xs text-muted-foreground">Consultation fee</p>
+              <p className="text-lg font-semibold text-foreground">{formatCurrency(doctor.consultationFee)}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{branch?.name}</p>
+            </div>
+            {canManage && <DoctorActions doctor={doctor} onDeleted={() => router.replace("/doctor-roster")} />}
           </div>
         </div>
       </div>

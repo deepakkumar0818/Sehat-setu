@@ -13,6 +13,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { PersonAvatar } from "@/components/shared/person-avatar";
 import { PatientFormDialog } from "@/components/patients/patient-form-dialog";
+import { PatientActions } from "@/components/patients/patient-actions";
 import { formatFriendlyDate } from "@/lib/format";
 import { useBranches } from "@/hooks/use-branches";
 import { usePatients } from "@/hooks/use-patients";
@@ -60,7 +61,18 @@ export default function PatientsPage() {
       { key: "phone", header: "Phone", render: (p) => p.phone },
       { key: "lastVisit", header: "Last Visit", render: (p) => (p.lastVisit ? formatFriendlyDate(p.lastVisit) : "—") },
       { key: "nextAppointment", header: "Next Appointment", render: (p) => <NextAppointmentCell patient={p} /> },
-      { key: "status", header: "Status", render: (p) => <StatusBadge status={p.status} /> },
+      { key: "status", header: "Status", render: (p) => <StatusBadge status={p.status} label={p.canManageAccess && p.status === "inactive" ? "Blocked" : undefined} /> },
+      {
+        key: "actions",
+        header: "",
+        render: (p) =>
+          p.canManageAccess ? (
+            // Menu clicks (portalled, but bubbling through React) must not open the row.
+            <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+              <PatientActions patient={p} />
+            </div>
+          ) : null,
+      },
     ],
     []
   );

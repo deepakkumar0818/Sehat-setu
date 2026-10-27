@@ -80,6 +80,24 @@ export function useUpdatePatient() {
   });
 }
 
+/** Live data only: an Administrator blocks or unblocks a patient (record and portal access). */
+export function useSetPatientAccess() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: "active" | "blocked" }) => liveApi.patients.setAccess(id, status),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.patients.all }),
+  });
+}
+
+/** Live data only: an Administrator deletes a patient with no history. */
+export function useRemovePatient() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => liveApi.patients.remove(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.patients.all }),
+  });
+}
+
 export function useSetPatientStatus() {
   const live = useLiveData();
   const queryClient = useQueryClient();

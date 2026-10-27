@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { PersonAvatar } from "@/components/shared/person-avatar";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { StartConsultationButton } from "@/components/patients/start-consultation-button";
+import { PatientActions } from "@/components/patients/patient-actions";
 import { AppointmentFormDialog } from "@/components/appointments/appointment-form-dialog";
 import { PrescriptionBuilderDialog } from "@/components/prescriptions/prescription-builder-dialog";
 import { ManualInvoiceDialog } from "@/components/billing/manual-invoice-dialog";
@@ -44,7 +45,7 @@ export function PatientHeader({ patient }: { patient: Patient }) {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-semibold text-foreground">{patient.name}</h1>
-              <StatusBadge status={patient.status} />
+              <StatusBadge status={patient.status} label={live && patient.canManageAccess && patient.status === "inactive" ? "Blocked" : undefined} />
             </div>
             <p className="text-sm text-muted-foreground">
               {patient.patientNumber ?? patient.id} · {patient.age} yrs · <span className="capitalize">{patient.gender}</span> · {branch?.name}
@@ -61,6 +62,7 @@ export function PatientHeader({ patient }: { patient: Patient }) {
           <Button size="sm" onClick={() => setBookOpen(true)}>
             <CalendarPlusIcon /> Book Appointment
           </Button>
+          {live && patient.canManageAccess && <PatientActions patient={patient} size="sm" onDeleted={() => router.replace("/patients")} />}
           {/* Clinical, billing and report actions join the live app in later phases. */}
           {!live && (
             <>

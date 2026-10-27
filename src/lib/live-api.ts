@@ -425,6 +425,9 @@ export const liveApi = {
         Object.fromEntries(Object.entries(patch).filter(([k]) => (PATIENT_EDITABLE as readonly string[]).includes(k)))
       ),
     setStatus: (id: string, status: PatientStatus) => apiPatch<Patient>(`/api/v1/patients/${encodeURIComponent(id)}`, { status }),
+    /** Administrators: block (record inactive + portal access off) or unblock. */
+    setAccess: (id: string, status: "active" | "blocked") => apiPatch<Patient>(`/api/v1/patients/${encodeURIComponent(id)}/access`, { status }),
+    remove: (id: string) => apiDelete<{ id: string; removed: true }>(`/api/v1/patients/${encodeURIComponent(id)}`),
     timeline: (id: string) => apiGet<TimelineEvent[]>(`/api/v1/patients/${encodeURIComponent(id)}/timeline`),
     // P6.4 patient portal linking codes (patient.portal_link).
     portalLink: (id: string) => apiGet<PortalLinkStatus>(`/api/v1/patients/${encodeURIComponent(id)}/portal-link`),
@@ -493,8 +496,11 @@ export const liveApi = {
   },
   doctors: {
     list: (params: ListDoctorsParams & { status?: "active" | "inactive" | "all" }) =>
-      apiGet<PagedResult<Doctor> & { capabilities?: { canInviteDoctors: boolean; invitationsReady: boolean } }>("/api/v1/doctors", params),
+      apiGet<PagedResult<Doctor> & { capabilities?: { canInviteDoctors: boolean; invitationsReady: boolean; canManageDoctors: boolean } }>("/api/v1/doctors", params),
     get: (id: string) => apiGet<Doctor>(`/api/v1/doctors/${encodeURIComponent(id)}`),
+    setStatus: (id: string, status: Doctor["status"]) =>
+      apiPatch<{ id: string; status: Doctor["status"]; upcomingAppointments: number }>(`/api/v1/doctors/${encodeURIComponent(id)}`, { status }),
+    remove: (id: string) => apiDelete<{ id: string; removed: true }>(`/api/v1/doctors/${encodeURIComponent(id)}`),
     slots: (id: string, date: string) => apiGet<string[]>(`/api/v1/doctors/${encodeURIComponent(id)}/slots`, { date }),
   },
   specialties: {
@@ -507,6 +513,8 @@ export const liveApi = {
     list: (params: ListStaffParams) => apiGet<PagedResult<StaffMember> & { capabilities: StaffCapabilities }>("/api/v1/staff", params),
     setStatus: (id: string, status: StaffMember["status"]) => apiPatch<{ id: string; status: StaffMember["status"] }>(`/api/v1/staff/${encodeURIComponent(id)}`, { status }),
     setPhone: (id: string, phone: string) => apiPatch<{ id: string; phone: string }>(`/api/v1/staff/${encodeURIComponent(id)}`, { phone }),
+    updateDetails: (id: string, patch: { name?: string; phone?: string; branchId?: string | null }) => apiPatch<{ id: string }>(`/api/v1/staff/${encodeURIComponent(id)}`, patch),
+    remove: (id: string) => apiDelete<{ id: string; removed: true }>(`/api/v1/staff/${encodeURIComponent(id)}`),
   },
   billing: {
     invoices: (params: ListInvoicesParams) => apiGet<PagedResult<InvoiceWithNames>>("/api/v1/invoices", params),

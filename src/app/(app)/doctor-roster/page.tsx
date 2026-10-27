@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { DataTablePagination } from "@/components/shared/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DoctorCard } from "@/components/doctors/doctor-card";
+import { DoctorActions } from "@/components/doctors/doctor-actions";
 import { DoctorFormDialog } from "@/components/doctors/doctor-form-dialog";
 import { QueryError } from "@/components/shared/query-error";
 import { InviteStaffDialog } from "@/components/staff/invite-staff-dialog";
@@ -32,7 +33,8 @@ export default function DoctorsPage() {
   const specialties = useSpecialtyOptions();
 
   const { data, isLoading, isError, error, refetch } = useDoctors({ search, specialization, branchId, page, pageSize: 12 });
-  const caps = data && "capabilities" in data ? (data.capabilities as { canInviteDoctors?: boolean; invitationsReady?: boolean } | undefined) : undefined;
+  const caps = data && "capabilities" in data ? (data.capabilities as { canInviteDoctors?: boolean; invitationsReady?: boolean; canManageDoctors?: boolean } | undefined) : undefined;
+  const canManage = live && Boolean(caps?.canManageDoctors);
   const mayInvite = live && Boolean(caps?.canInviteDoctors);
   const canInvite = mayInvite && Boolean(caps?.invitationsReady);
   const filtered = search !== "" || specialization !== "all" || branchId !== "all";
@@ -91,7 +93,7 @@ export default function DoctorsPage() {
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {data.items.map((d) => <DoctorCard key={d.id} doctor={d} />)}
+            {data.items.map((d) => <DoctorCard key={d.id} doctor={d} actions={canManage ? <DoctorActions doctor={d} /> : undefined} />)}
           </div>
           <div className="rounded-lg border"><DataTablePagination page={page} pageSize={data.pageSize} total={data.total} onPageChange={setPage} /></div>
         </>

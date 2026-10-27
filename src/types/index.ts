@@ -234,6 +234,10 @@ export interface StaffMember {
   canChangeStatus?: boolean;
   /** Live data only: whether the signed-in user may edit this person's phone number (Administrators). */
   canEditPhone?: boolean;
+  /** Live data only: whether the signed-in user may edit this person's name, phone and branch (Administrators). */
+  canEditDetails?: boolean;
+  /** Live data only: whether the signed-in user may delete this staff member (Administrators; never themselves). */
+  canRemove?: boolean;
 }
 
 export type PatientStatus = "active" | "inactive" | "archived";
@@ -254,6 +258,8 @@ export interface EmergencyContact {
  */
 export interface Patient {
   id: string;
+  /** Live data only: whether the signed-in user may block or delete this patient (Administrators). */
+  canManageAccess?: boolean;
   /** Human-facing number (e.g. "AAR-P-0001"); database records only. */
   patientNumber?: string;
   name: string;

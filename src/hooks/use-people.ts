@@ -79,6 +79,24 @@ export function useCreateDoctor() {
   });
 }
 
+/** Live data only: an Administrator suspends (inactive) or reactivates a doctor. */
+export function useSetDoctorStatus() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: Doctor["status"] }) => liveApi.doctors.setStatus(id, status),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.doctors.all }),
+  });
+}
+
+/** Live data only: an Administrator deletes a doctor with no appointments or lab reports. */
+export function useRemoveDoctor() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => liveApi.doctors.remove(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.doctors.all }),
+  });
+}
+
 export function useStaff(params: ListStaffParams = {}) {
   const live = useLiveData();
   return useQuery({
@@ -115,6 +133,25 @@ export function useUpdateStaffStatus() {
       if (live) await liveApi.staff.setStatus(id, status);
       else await updateStaffStatus(id, status);
     },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.staff.all }),
+  });
+}
+
+/** Live data only: an Administrator edits a staff member's name, phone and/or branch; the dialog shows errors inline. */
+export function useUpdateStaffDetails() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: { name?: string; phone?: string; branchId?: string | null } }) => liveApi.staff.updateDetails(id, patch),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.staff.all }),
+    meta: { inlineErrors: true },
+  });
+}
+
+/** Live data only: an Administrator deletes a staff member. */
+export function useRemoveStaff() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => liveApi.staff.remove(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.staff.all }),
   });
 }

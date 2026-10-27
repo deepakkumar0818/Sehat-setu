@@ -40,7 +40,7 @@ export async function listDoctors(
   ctx: TenantContext,
   input: z.infer<typeof listDoctorsSchema>,
   db?: TenantTx
-): Promise<Page<Doctor> & { capabilities: { canInviteDoctors: boolean; invitationsReady: boolean } }> {
+): Promise<Page<Doctor> & { capabilities: { canInviteDoctors: boolean; invitationsReady: boolean; canManageDoctors: boolean } }> {
   // Doctor invitations need both user.create and doctor.manage (Administrators); the server re-checks.
   const canInviteDoctors = hasAnyPermission(ctx, INVITATION_MANAGE) && hasAnyPermission(ctx, ["doctor.manage"]);
   const { page, pageSize, skip, take } = pageArgs(input.page, input.pageSize, 200);
@@ -60,7 +60,7 @@ export async function listDoctors(
       tx.doctorProfile.findMany({ where, orderBy: [{ user: { name: "asc" } }, { id: "asc" }], skip, take, select: doctorSelect }),
       tx.doctorProfile.count({ where }),
     ]);
-    const capabilities = { canInviteDoctors, invitationsReady: canInviteDoctors ? await invitationsReady(tx) : false };
+    const capabilities = { canInviteDoctors, invitationsReady: canInviteDoctors ? await invitationsReady(tx) : false, canManageDoctors: hasAnyPermission(ctx, DOCTOR_MANAGE) };
     const availability = availabilityFrom((await loadClinicSettings(tx, ctx.clinicId)).weeklyHours);
     return { items: rows.map((r) => toUiDoctor(r as DbDoctorRow, availability)), total, page, pageSize, capabilities };
   });
@@ -105,6 +105,8 @@ export function staffCapabilities(ctx: TenantContext, ready = false, phoneEditRe
     canViewInvitations: hasAnyPermission(ctx, INVITATION_VIEW),
     invitationsReady: ready,
     canEditPhone: hasAnyPermission(ctx, STAFF_PHONE_MANAGE) && phoneEditReady,
+    canEditDetails: hasAnyPermission(ctx, STAFF_DETAILS_MANAGE),
+    canRemove: hasAnyPermission(ctx, STAFF_REMOVE),
   };
 }
 
@@ -169,6 +171,9 @@ export async function listStaff(
         canChangeStatus: capabilities.canChangeStatus && m.userId !== ctx.userId && (!ctx.branchId || m.branchId === ctx.branchId),
         // Mirrors app.set_staff_phone's scope check (the database also refuses a person shared with another clinic).
         canEditPhone: capabilities.canEditPhone && (!ctx.branchId || m.branchId === ctx.branchId),
+        // Mirror app.set_staff_name / app.remove_staff_member (which also refuse the last active administrator).
+        canEditDetails: capabilities.canEditDetails && (!ctx.branchId || m.branchId === ctx.branchId),
+        canRemove: capabilities.canRemove && m.userId !== ctx.userId && (!ctx.branchId || m.branchId === ctx.branchId),
       })),
       total,
       page,
@@ -188,13 +193,80 @@ export async function setStaffStatus(ctx: TenantContext, membershipId: string, r
   return runScoped(ctx, db, async (tx) => {
     const m = await tx.clinicMembership.findFirst({
       where: { id: membershipId, clinicId: ctx.clinicId, role: { key: { in: Object.keys(ROLE_KEY_TO_STAFF_ROLE) as (keyof typeof ROLE_KEY_TO_STAFF_ROLE)[] } } },
-      select: { id: true, userId: true, branchId: true },
+      select: { id: true, userId: true, branchId: true, status: true, role: { select: { key: true } } },
     });
     if (!m) throw new AuthError("NOT_FOUND");
     if (ctx.branchId && m.branchId !== ctx.branchId) throw new AuthError("NOT_FOUND");
     if (m.userId === ctx.userId) throw new DataError("CONFLICT", "You can't change your own access.");
+    if (status === "inactive" && m.status === "ACTIVE" && m.role.key === "ADMINISTRATOR") {
+      const others = await tx.clinicMembership.count({ where: { clinicId: ctx.clinicId, id: { not: m.id }, status: "ACTIVE", role: { key: "ADMINISTRATOR" } } });
+      if (others === 0) throw new DataError("CONFLICT", "This is the clinic's only active administrator. Make someone else an administrator first.");
+    }
     await tx.clinicMembership.update({ where: { id: m.id }, data: { status: status === "active" ? "ACTIVE" : "INACTIVE" } });
     return { id: m.id, status };
+  });
+}
+
+/** Suspending or deleting a doctor: Administrators (doctor.manage). */
+export const DOCTOR_MANAGE = ["doctor.manage"] as const;
+
+const doctorStatusSchema = z.object({ status: z.enum(["active", "inactive"]) }).strict();
+
+/** Appointments still ahead of a doctor (they stay booked when the doctor is suspended). */
+const UPCOMING = ["SCHEDULED", "CONFIRMED", "CHECKED_IN", "PENDING_APPROVAL"] as const;
+
+/**
+ * Suspend (inactive) or reactivate a doctor: the profile — off every booking
+ * list and the clinic's public link — and the doctor's membership, so they
+ * can't sign in to this clinic. Their appointments and records stay.
+ */
+export async function setDoctorStatus(ctx: TenantContext, doctorId: string, raw: unknown, db?: TenantTx, now = new Date()): Promise<{ id: string; status: Doctor["status"]; upcomingAppointments: number }> {
+  requirePermission(ctx, DOCTOR_MANAGE);
+  const { status } = doctorStatusSchema.parse(raw);
+  if (!z.string().uuid().safeParse(doctorId).success) throw new AuthError("NOT_FOUND");
+  return runScoped(ctx, db, async (tx) => {
+    const d = await tx.doctorProfile.findFirst({ where: { id: doctorId, clinicId: ctx.clinicId }, select: { id: true, userId: true } });
+    if (!d) throw new AuthError("NOT_FOUND");
+    if (d.userId === ctx.userId) throw new DataError("CONFLICT", "You can't change your own access.");
+    const value = status === "active" ? "ACTIVE" : "INACTIVE";
+    await tx.doctorProfile.update({ where: { id: d.id }, data: { status: value } });
+    await tx.clinicMembership.updateMany({ where: { clinicId: ctx.clinicId, userId: d.userId, role: { key: "DOCTOR" } }, data: { status: value } });
+    const upcomingAppointments = await tx.appointment.count({ where: { clinicId: ctx.clinicId, doctorId: d.id, startsAt: { gte: now }, status: { in: [...UPCOMING] } } });
+    return { id: d.id, status, upcomingAppointments };
+  });
+}
+
+const REMOVE_ERRORS: Record<string, () => Error> = {
+  NOT_PERMITTED: () => new AuthError("FORBIDDEN"),
+  NOT_FOUND: () => new AuthError("NOT_FOUND"),
+  SELF: () => new DataError("CONFLICT", "You can't delete your own doctor profile."),
+};
+
+/**
+ * Permanently delete a doctor with no patient history, through app.remove_doctor
+ * (migration 20261107000000), which re-checks the caller and the clinic. A
+ * doctor with any appointment or lab report can only be suspended.
+ */
+export async function removeDoctor(ctx: TenantContext, doctorId: string, db?: TenantTx): Promise<{ id: string; removed: true }> {
+  requirePermission(ctx, DOCTOR_MANAGE);
+  if (!z.string().uuid().safeParse(doctorId).success) throw new AuthError("NOT_FOUND");
+  return runScoped(ctx, db, async (tx) => {
+    let result: string | undefined;
+    try {
+      [{ result } = { result: undefined }] = await tx.$queryRaw<{ result: string }[]>`SELECT app.remove_doctor(${doctorId}::uuid) AS result`;
+    } catch (err) {
+      const text = err instanceof Error ? `${err.message} ${JSON.stringify((err as { meta?: unknown }).meta ?? "")}` : "";
+      const code = /doctor remove: ([A-Z_]+)/.exec(text)?.[1];
+      const mapped = code ? REMOVE_ERRORS[code] : undefined;
+      if (mapped) throw mapped();
+      if (/app\.remove_doctor\(.*\) does not exist|42883/.test(text)) throw new DataError("FEATURE_UNAVAILABLE", "Deleting doctors isn't set up on this clinic database yet.");
+      throw err;
+    }
+    if (result === "HAS_HISTORY") {
+      throw new DataError("CONFLICT", "This doctor has appointments or lab reports, which are part of patients' medical records and must be kept. Suspend the doctor instead.");
+    }
+    if (result !== "REMOVED") throw new Error("unexpected remove_doctor result");
+    return { id: doctorId, removed: true };
   });
 }
 
@@ -233,11 +305,98 @@ export async function setStaffPhone(ctx: TenantContext, membershipId: string, ra
   });
 }
 
-/** PATCH /api/v1/staff/[id]: exactly one of { status } or { phone }. */
+/** Editing a staff member's details (name, phone, branch): Administrators only. */
+export const STAFF_DETAILS_MANAGE = ["user.update"] as const;
+/** Deleting a staff member: Administrators only. */
+export const STAFF_REMOVE = ["user.disable"] as const;
+
+/** Any of name, phone and branch (null = all branches). Email is the person's sign-in and isn't edited here. */
+export const staffDetailsSchema = z
+  .object({ name: z.string().trim().min(2, "Enter the full name.").max(120), phone: phoneSchema, branchId: z.string().uuid().nullable() })
+  .partial()
+  .strict()
+  .refine((d) => Object.keys(d).length > 0, "Nothing to update.");
+
+const STAFF_ADMIN_ERRORS: Record<string, () => Error> = {
+  NOT_PERMITTED: () => new AuthError("FORBIDDEN"),
+  NOT_FOUND: () => new AuthError("NOT_FOUND"),
+  INVALID_NAME: () => new DataError("INVALID_INPUT", "Enter the full name (2 to 120 characters)."),
+  SELF: () => new DataError("CONFLICT", "You can't delete your own account."),
+  LAST_ADMIN: () => new DataError("CONFLICT", "This is the clinic's only active administrator. Make someone else an administrator first."),
+  // Deliberately vague, like the phone: the clinic shouldn't learn where else the person works.
+  SHARED_ACCOUNT: () =>
+    new DataError("PHONE_LOCKED", "This person's name is linked to their account elsewhere and can't be changed from this clinic. Ask them to contact Sehat Setu support."),
+};
+
+/** Turns a 'staff admin: <CODE>' refusal from the database into an API error; rethrows anything else. */
+function mapStaffAdminError(err: unknown, feature: string): never {
+  const text = err instanceof Error ? `${err.message} ${JSON.stringify((err as { meta?: unknown }).meta ?? "")}` : "";
+  const code = /staff admin: ([A-Z_]+)/.exec(text)?.[1];
+  const mapped = code ? STAFF_ADMIN_ERRORS[code] : undefined;
+  if (mapped) throw mapped();
+  if (/does not exist|42883/.test(text)) throw new DataError("FEATURE_UNAVAILABLE", `${feature} isn't set up on this clinic database yet.`);
+  throw err;
+}
+
+/**
+ * Edit a staff member's name, phone and/or branch. The name and phone live on
+ * the person's login (users), so they go through app.set_staff_name and
+ * app.set_staff_phone, which refuse a person shared with another clinic; the
+ * branch is the membership's, an ordinary update.
+ */
+export async function updateStaffDetails(ctx: TenantContext, membershipId: string, raw: unknown, db?: TenantTx): Promise<{ id: string }> {
+  requirePermission(ctx, STAFF_DETAILS_MANAGE);
+  const patch = staffDetailsSchema.parse(raw);
+  if (!z.string().uuid().safeParse(membershipId).success) throw new AuthError("NOT_FOUND");
+  return runScoped(ctx, db, async (tx) => {
+    const m = await tx.clinicMembership.findFirst({
+      where: { id: membershipId, clinicId: ctx.clinicId, role: { key: { in: Object.keys(ROLE_KEY_TO_STAFF_ROLE) as (keyof typeof ROLE_KEY_TO_STAFF_ROLE)[] } } },
+      select: { id: true, branchId: true },
+    });
+    if (!m || (ctx.branchId && m.branchId !== ctx.branchId)) throw new AuthError("NOT_FOUND");
+    if (patch.branchId !== undefined && patch.branchId !== m.branchId) {
+      // A branch-limited administrator can't move someone out of their branch (or give clinic-wide access).
+      if (ctx.branchId) throw new AuthError("FORBIDDEN");
+      if (patch.branchId) {
+        const branch = await tx.branch.findFirst({ where: { id: patch.branchId, clinicId: ctx.clinicId, status: "ACTIVE" }, select: { id: true } });
+        if (!branch) throw new DataError("INVALID_INPUT", "Choose an active branch.");
+      }
+      await tx.clinicMembership.update({ where: { id: m.id }, data: { branchId: patch.branchId } });
+    }
+    try {
+      if (patch.name !== undefined) await tx.$queryRaw`SELECT app.set_staff_name(${m.id}::uuid, ${patch.name})::text AS id`;
+    } catch (err) {
+      mapStaffAdminError(err, "Editing names");
+    }
+    if (patch.phone !== undefined) await setStaffPhone(ctx, m.id, { phone: patch.phone }, tx);
+    return { id: m.id };
+  });
+}
+
+/**
+ * Delete a staff member from the clinic through app.remove_staff_member
+ * (migration 20261108000000): never yourself, never the last active
+ * administrator. Their login and everything they recorded are kept.
+ */
+export async function removeStaffMember(ctx: TenantContext, membershipId: string, db?: TenantTx): Promise<{ id: string; removed: true }> {
+  requirePermission(ctx, STAFF_REMOVE);
+  if (!z.string().uuid().safeParse(membershipId).success) throw new AuthError("NOT_FOUND");
+  return runScoped(ctx, db, async (tx) => {
+    try {
+      await tx.$queryRaw`SELECT app.remove_staff_member(${membershipId}::uuid) AS result`;
+    } catch (err) {
+      mapStaffAdminError(err, "Deleting staff");
+    }
+    return { id: membershipId, removed: true };
+  });
+}
+
+/** PATCH /api/v1/staff/[id]: { status } (activate / block), { phone } alone, or details — any of { name, phone, branchId }. */
 export async function updateStaffMember(ctx: TenantContext, membershipId: string, raw: unknown, db?: TenantTx) {
   const keys = raw && typeof raw === "object" ? Object.keys(raw) : [];
   if (keys.length === 1 && keys[0] === "phone") return setStaffPhone(ctx, membershipId, raw, db);
-  return setStaffStatus(ctx, membershipId, raw, db);
+  if (keys.includes("status")) return setStaffStatus(ctx, membershipId, raw, db);
+  return updateStaffDetails(ctx, membershipId, raw, db);
 }
 
 export async function listBranches(ctx: TenantContext, db?: TenantTx): Promise<Branch[]> {

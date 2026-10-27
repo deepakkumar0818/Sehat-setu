@@ -2,7 +2,8 @@
 
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ContactIcon, MailPlusIcon, PencilIcon, PlusIcon } from "lucide-react";
+import { ContactIcon, MailPlusIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -19,11 +20,13 @@ import { PermissionMatrix } from "@/components/staff/permission-matrix";
 import { StaffFormDialog } from "@/components/staff/staff-form-dialog";
 import { InviteStaffDialog } from "@/components/staff/invite-staff-dialog";
 import { EditPhoneDialog } from "@/components/staff/edit-phone-dialog";
+import { EditStaffDialog } from "@/components/staff/edit-staff-dialog";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { InvitationsPanel } from "@/components/staff/invitations-panel";
 import { INVITATIONS_NOT_READY } from "@/components/staff/invitation-labels";
 import { ROLE_LABELS } from "@/lib/permissions";
 import { formatRelativeTime } from "@/lib/format";
-import { useStaff, useUpdateStaffStatus } from "@/hooks/use-people";
+import { useRemoveStaff, useStaff, useUpdateStaffStatus } from "@/hooks/use-people";
 import { useBranches } from "@/hooks/use-branches";
 import type { StaffMember, StaffRole } from "@/types";
 import type { StaffCapabilities } from "@/lib/live-types";
@@ -59,6 +62,9 @@ function StaffPageContent() {
   const { data, isLoading, isError, error, refetch } = useStaff({ search, role, branchId, page, pageSize: 10 });
   const updateStatus = useUpdateStaffStatus();
   const [editingPhone, setEditingPhone] = useState<StaffMember | null>(null);
+  const [editing, setEditing] = useState<StaffMember | null>(null);
+  const [removing, setRemoving] = useState<StaffMember | null>(null);
+  const removeStaff = useRemoveStaff();
   const capabilities: StaffCapabilities | undefined = live && data && "capabilities" in data ? (data.capabilities as StaffCapabilities) : undefined;
   const roles = live ? LIVE_ROLES : DEMO_ROLES;
   const filtered = search !== "" || role !== "all" || branchId !== "all";
@@ -82,26 +88,44 @@ function StaffPageContent() {
     { key: "phone", header: "Phone", render: (s) => formatPhone(s.phone) || "—" },
     // Last activity isn't recorded in the clinic database, so the column is demo-only.
     ...(live ? [] : [{ key: "lastActive", header: "Last Active", render: (s: StaffMember) => (s.lastActiveAt ? formatRelativeTime(s.lastActiveAt) : "—") }]),
-    { key: "status", header: "Status", render: (s) => <StatusBadge status={s.status} /> },
+    { key: "status", header: "Status", render: (s) => <StatusBadge status={s.status} label={live && s.status === "inactive" ? "Blocked" : undefined} /> },
     {
       key: "actions",
       header: "",
       render: (s) => (
         <div className="flex items-center justify-end gap-2">
-          {/* Live, Administrators: the server decides (and re-checks) who may edit a phone. */}
-          {live && s.canEditPhone && (
-            <Button variant="ghost" size="icon" aria-label={`Edit phone number for ${s.name}`} title="Edit phone number" onClick={() => setEditingPhone(s)}>
+          {/* Live, Administrators: the server decides (and re-checks) who may edit details or a phone. */}
+          {live && s.canEditDetails ? (
+            <Button variant="ghost" size="icon" aria-label={`Edit details for ${s.name}`} title="Edit name, phone and branch" onClick={() => setEditing(s)}>
               <PencilIcon />
             </Button>
+          ) : (
+            live &&
+            s.canEditPhone && (
+              <Button variant="ghost" size="icon" aria-label={`Edit phone number for ${s.name}`} title="Edit phone number" onClick={() => setEditingPhone(s)}>
+                <PencilIcon />
+              </Button>
+            )
           )}
-          {/* Live: only when the server says this user may change this membership (never their own). */}
+          {/* Live: only when the server says this user may change this membership (never their own). Off = blocked. */}
           {(live ? s.canChangeStatus : true) && (
             <Switch
-              aria-label={`${s.status === "active" ? "Deactivate" : "Activate"} ${s.name}`}
+              aria-label={`${s.status === "active" ? (live ? "Block" : "Deactivate") : live ? "Unblock" : "Activate"} ${s.name}`}
+              title={live ? (s.status === "active" ? "Active — switch off to block sign-in" : "Blocked — switch on to allow sign-in") : undefined}
               checked={s.status === "active"}
               disabled={updateStatus.isPending}
-              onCheckedChange={(checked) => updateStatus.mutate({ id: s.id, status: checked ? "active" : "inactive" })}
+              onCheckedChange={(checked) =>
+                updateStatus.mutate(
+                  { id: s.id, status: checked ? "active" : "inactive" },
+                  { onSuccess: () => live && toast.success(checked ? `${s.name} can sign in again.` : `${s.name} is blocked from signing in.`) }
+                )
+              }
             />
+          )}
+          {live && s.canRemove && (
+            <Button variant="ghost" size="icon" className="text-danger hover:text-danger" aria-label={`Delete ${s.name}`} title="Delete from clinic" onClick={() => setRemoving(s)}>
+              <Trash2Icon />
+            </Button>
           )}
         </div>
       ),
@@ -208,6 +232,23 @@ function StaffPageContent() {
       <StaffFormDialog open={dialogOpen} onOpenChange={setDialogOpen} />
       {live && capabilities?.canInvite && capabilities.invitationsReady && <InviteStaffDialog open={inviteOpen} onOpenChange={setInviteOpen} />}
       {live && editingPhone && <EditPhoneDialog key={editingPhone.id} member={editingPhone} onOpenChange={(open) => !open && setEditingPhone(null)} />}
+      {live && editing && <EditStaffDialog key={editing.id} member={editing} onOpenChange={(open) => !open && setEditing(null)} />}
+      <ConfirmDialog
+        open={Boolean(removing)}
+        onOpenChange={(open) => !open && setRemoving(null)}
+        title={`Delete ${removing?.name ?? "this staff member"}?`}
+        description="They're removed from your clinic and can no longer sign in to it. Everything they recorded stays. This can't be undone — to stop access temporarily, block them with the switch instead."
+        confirmLabel="Delete"
+        destructive
+        isLoading={removeStaff.isPending}
+        onConfirm={() =>
+          removing &&
+          removeStaff.mutate(removing.id, {
+            onSuccess: () => toast.success(`${removing.name} was removed from the clinic.`),
+            onSettled: () => setRemoving(null),
+          })
+        }
+      />
     </div>
   );
 }

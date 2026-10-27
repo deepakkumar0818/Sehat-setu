@@ -19,6 +19,10 @@ export interface StaffCapabilities {
   invitationsReady: boolean;
   /** Administrators, once migration 20261020000100 (app.set_staff_phone) is applied. */
   canEditPhone: boolean;
+  /** Administrators: edit name, phone and branch. */
+  canEditDetails: boolean;
+  /** Administrators: delete a staff member (once migration 20261108000000 is applied). */
+  canRemove: boolean;
 }
 
 // --- Notifications -----------------------------------------------------------
