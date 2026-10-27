@@ -38,7 +38,9 @@ export type DataErrorCode =
   | "GONE"
   | "STORAGE_UNAVAILABLE"
   | "SHARED_LOCKED"
-  | "NOT_REVIEWED";
+  | "NOT_REVIEWED"
+  // The clinic's Sehat Setu plan doesn't allow another branch / doctor / staff member.
+  | "PLAN_LIMIT";
 
 const STATUS: Record<DataErrorCode, number> = {
   INVALID_INPUT: 400,
@@ -73,6 +75,7 @@ const STATUS: Record<DataErrorCode, number> = {
   STORAGE_UNAVAILABLE: 503,
   SHARED_LOCKED: 409,
   NOT_REVIEWED: 409,
+  PLAN_LIMIT: 409,
 };
 
 export class DataError extends Error {

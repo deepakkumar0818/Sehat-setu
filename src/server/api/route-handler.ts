@@ -1,9 +1,11 @@
 import "server-only";
 import { NextResponse, type NextRequest } from "next/server";
 import { ZodError } from "zod";
-import { requireIdentity, requirePatient, requireStaff } from "@/server/auth/session";
+import { requireIdentity, requirePatient, requirePlatformAdmin, requireStaff } from "@/server/auth/session";
 import { AuthError, isAuthError } from "@/server/auth/errors";
 import { DataError } from "@/server/api/errors";
+import { errorText } from "@/server/data/document-rules";
+import { planLimitMessage } from "@/server/data/platform-rules";
 import { logServerError } from "@/server/log";
 import { reportServerError } from "@/server/monitoring";
 import type { Identity, PatientContext, TenantContext } from "@/server/auth/authorize";
@@ -86,6 +88,22 @@ export function fileRoute<P extends RouteParams = RouteParams>(
   };
 }
 
+/** For /api/v1/platform/*: an active Sehat Setu super admin (no clinic context; the database re-checks). */
+export function platformRoute<P extends RouteParams = RouteParams>(
+  options: { resource: string },
+  handler: (args: { identity: Identity; request: NextRequest; params: P }) => Promise<unknown>
+) {
+  return async (request: NextRequest, context: { params: Promise<P> }) => {
+    try {
+      const identity = await requirePlatformAdmin(options.resource);
+      const result = await handler({ identity, request, params: await context.params });
+      return NextResponse.json(result ?? null, { headers: NO_STORE });
+    } catch (err) {
+      return toErrorResponse(err, options.resource);
+    }
+  };
+}
+
 type PatientHandler<P extends RouteParams, T> = (args: { ctx: PatientContext; request: NextRequest; params: P }) => Promise<T>;
 
 /**
@@ -153,6 +171,9 @@ function toErrorResponse(err: unknown, resource: string) {
   if (typeof err === "object" && err && "code" in err && (err as { code?: string }).code === "P2002") {
     return errorResponse(409, "CONFLICT", "That record already exists.");
   }
+  // Raised by the plan-limit triggers (migration 20261104000000_platform_subscriptions).
+  const planLimit = planLimitMessage(errorText(err));
+  if (planLimit) return errorResponse(409, "PLAN_LIMIT", planLimit);
   logServerError(`api ${resource}`, err); // codes only: never row data, messages of database errors or secrets
   reportServerError(`api ${resource}`, err);
   return errorResponse(500, "INTERNAL", "Something went wrong. Please try again.");

@@ -36,7 +36,7 @@ export async function findUserAndPin(tx: TenantTx, authUserId: string): Promise<
   return row ? { id: row.id, email: row.email, name: row.name, status: row.status, authProviderId: row.authProviderId } : null;
 }
 
-type MembershipsAndLinks = Pick<Identity, "memberships"> & Required<Pick<Identity, "doctorProfiles" | "patientLinks">>;
+type MembershipsAndLinks = Pick<Identity, "memberships"> & Required<Pick<Identity, "doctorProfiles" | "patientLinks" | "platformAdmin">>;
 
 /**
  * Memberships (with clinic, role and effective permission keys), active doctor
@@ -46,7 +46,7 @@ type MembershipsAndLinks = Pick<Identity, "memberships"> & Required<Pick<Identit
  * patients_read) exposes only this user's own rows.
  */
 export async function loadMembershipsAndLinks(tx: TenantTx, userId: string): Promise<MembershipsAndLinks> {
-  const [row] = await tx.$queryRaw<{ memberships: MembershipRecord[]; doctorProfiles: { id: string; clinicId: string }[]; patientLinks: { patientId: string; clinicId: string }[] }[]>`
+  const [row] = await tx.$queryRaw<{ memberships: MembershipRecord[]; doctorProfiles: { id: string; clinicId: string }[]; patientLinks: { patientId: string; clinicId: string }[]; platformAdmin: boolean }[]>`
     SELECT
       (SELECT coalesce(json_agg(json_build_object(
                 'id', m.id, 'clinicId', m."clinicId", 'clinicName', c.name, 'clinicStatus', c.status,
@@ -67,6 +67,8 @@ export async function loadMembershipsAndLinks(tx: TenantTx, userId: string): Pro
       (SELECT coalesce(json_agg(json_build_object('id', d.id, 'clinicId', d."clinicId")), '[]'::json)
          FROM doctor_profiles d WHERE d."userId" = ${userId}::uuid AND d.status = 'ACTIVE') AS "doctorProfiles",
       (SELECT coalesce(json_agg(json_build_object('patientId', pt.id, 'clinicId', pt."clinicId")), '[]'::json)
-         FROM patients pt WHERE pt."userId" = ${userId}::uuid AND pt.status = 'ACTIVE') AS "patientLinks"`;
+         FROM patients pt WHERE pt."userId" = ${userId}::uuid AND pt.status = 'ACTIVE') AS "patientLinks",
+      -- Platform super admin (migration 20261103000000_platform_admin): checked against the pinned login.
+      app.is_platform_admin() AS "platformAdmin"`;
   return row;
 }

@@ -1,7 +1,7 @@
 // Typed calls to the clinic database API (/api/v1). Mirrors the signatures of
 // the mock services in src/services so hooks can switch between them; this
 // module imports nothing from the mock store.
-import { ApiRequestError, apiGet, apiPatch, apiPost, apiPut, toQuery } from "@/lib/api-client";
+import { ApiRequestError, apiDelete, apiGet, apiPatch, apiPost, apiPut, toQuery } from "@/lib/api-client";
 import type { PagedResult } from "@/lib/async";
 import type { AppointmentWithNames, CreateAppointmentInput, ListAppointmentsParams } from "@/services/appointments";
 import type { BillingSummary, CreateManualInvoiceInput, InvoiceWithNames, ListInvoicesParams, ListPaymentsParams } from "@/services/billing";
@@ -60,6 +60,17 @@ import type {
   ClinicProfileInput,
   ClinicSettings,
   ClinicSettingsPage,
+  PlatformActivityKind,
+  PlatformActivityPage,
+  PlatformClinicCreated,
+  PlatformClinicDetail,
+  PlatformClinicInput,
+  PlatformClinicProfileInput,
+  PlatformOverview,
+  PlatformPlan,
+  PlatformPlanInput,
+  PlatformSubscriptionInput,
+  SubscriptionPaymentInput,
   DepartmentInput,
   DepartmentPage,
   LabTestCategory,
@@ -289,6 +300,26 @@ export interface PortalBookingRequest {
 }
 
 export const liveApi = {
+  platform: {
+    overview: () => apiGet<PlatformOverview>("/api/v1/platform/clinics"),
+    createClinic: (input: PlatformClinicInput) => apiPost<PlatformClinicCreated>("/api/v1/platform/clinics", input),
+    setStatus: (id: string, status: "active" | "suspended") => apiPatch<{ ok: true }>(`/api/v1/platform/clinics/${encodeURIComponent(id)}`, { status }),
+    resendInvite: (id: string, email: string) => apiPost<{ sent: boolean; problem: string | null }>(`/api/v1/platform/clinics/${encodeURIComponent(id)}/invite`, { email }),
+    clinic: (id: string) => apiGet<PlatformClinicDetail>(`/api/v1/platform/clinics/${encodeURIComponent(id)}`),
+    updateClinic: (id: string, input: PlatformClinicProfileInput) => apiPut<{ ok: true }>(`/api/v1/platform/clinics/${encodeURIComponent(id)}/profile`, input),
+    addAdmin: (id: string, input: { name: string; email: string }) =>
+      apiPost<{ adminIsNew: boolean; invitationSent: boolean | null; invitationProblem: string | null }>(`/api/v1/platform/clinics/${encodeURIComponent(id)}/admins`, input),
+    removeAdmin: (id: string, userId: string) => apiDelete<{ ok: true }>(`/api/v1/platform/clinics/${encodeURIComponent(id)}/admins/${encodeURIComponent(userId)}`),
+    setSubscription: (id: string, input: PlatformSubscriptionInput) => apiPut<{ ok: true }>(`/api/v1/platform/clinics/${encodeURIComponent(id)}/subscription`, input),
+    recordPayment: (id: string, input: SubscriptionPaymentInput) =>
+      apiPost<{ paymentId: string; paidUntil: string; reactivated: boolean }>(`/api/v1/platform/clinics/${encodeURIComponent(id)}/payments`, input),
+    voidPayment: (id: string, paymentId: string, reason: string) =>
+      apiPost<{ paidUntil: string }>(`/api/v1/platform/clinics/${encodeURIComponent(id)}/payments/${encodeURIComponent(paymentId)}/void`, { reason }),
+    plans: () => apiGet<PlatformPlan[]>("/api/v1/platform/plans"),
+    createPlan: (input: PlatformPlanInput) => apiPost<{ id: string }>("/api/v1/platform/plans", input),
+    updatePlan: (id: string, input: Omit<PlatformPlanInput, "key">) => apiPut<{ id: string }>(`/api/v1/platform/plans/${encodeURIComponent(id)}`, input),
+    activity: (params: { clinicId?: string; kind?: PlatformActivityKind; before?: string } = {}) => apiGet<PlatformActivityPage>("/api/v1/platform/activity", params),
+  },
   portal: {
     summary: () => apiGet<PortalSummary>("/api/v1/portal/summary"),
     labReports: (params: { page?: number; pageSize?: number } = {}) => apiGet<PortalPage<PortalLabReport>>("/api/v1/portal/lab-reports", params),

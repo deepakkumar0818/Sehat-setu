@@ -93,7 +93,7 @@ async function loadIdentity(authUser: VerifiedAuthUser): Promise<Identity | null
     if (!user || user.authProviderId !== authUser.id) return null;
 
     // Own rows only (RLS: memberships/doctor_profiles/patients where userId = this user).
-    const { memberships, doctorProfiles, patientLinks } = await loadMembershipsAndLinks(tx, user.id);
+    const { memberships, doctorProfiles, patientLinks, platformAdmin } = await loadMembershipsAndLinks(tx, user.id);
 
     return {
       userId: user.id,
@@ -105,6 +105,7 @@ async function loadIdentity(authUser: VerifiedAuthUser): Promise<Identity | null
       doctorProfiles,
       patientLinks,
       memberships,
+      platformAdmin,
     };
   });
   if (justLinked && identity) {
@@ -183,6 +184,30 @@ export async function requirePatient(resource: string): Promise<PatientContext> 
   } catch (err) {
     if (isAuthError(err)) await auditDenied(err, resource);
     throw err;
+  }
+}
+
+/** For platform (super admin) Route Handlers: the verified identity of an active super admin. Refusals are audited. */
+export async function requirePlatformAdmin(resource: string): Promise<Identity> {
+  try {
+    const identity = await requireIdentity();
+    if (identity.status !== "ACTIVE" || !identity.platformAdmin) throw new AuthError("FORBIDDEN");
+    return identity;
+  } catch (err) {
+    if (isAuthError(err)) await auditDenied(err, resource);
+    throw err;
+  }
+}
+
+/** Server-layout guard for the platform console (/platform). */
+export async function guardPlatformRoute(): Promise<Identity | null> {
+  await connection();
+  if (!isSupabaseAuthEnabled()) return null;
+  try {
+    return await requirePlatformAdmin("/platform");
+  } catch (err) {
+    if (isAuthError(err) && err.code === "NOT_PROVISIONED") redirect(LINK_ACCOUNT_PATH);
+    redirectOnAuthError(err, "/platform");
   }
 }
 

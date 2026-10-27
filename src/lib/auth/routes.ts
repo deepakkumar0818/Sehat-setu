@@ -41,7 +41,10 @@ export const PORTAL_PREFIX = "/portal";
  */
 export const IDENTITY_PREFIXES: readonly string[] = ["/invitations", "/link-account"];
 
-export const PROTECTED_PREFIXES: readonly string[] = [...Object.keys(STAFF_ROUTE_PERMISSIONS), PORTAL_PREFIX, ...IDENTITY_PREFIXES];
+/** The Sehat Setu super admin console (checked by guardPlatformRoute). */
+export const PLATFORM_PREFIX = "/platform";
+
+export const PROTECTED_PREFIXES: readonly string[] = [...Object.keys(STAFF_ROUTE_PERMISSIONS), PORTAL_PREFIX, ...IDENTITY_PREFIXES, PLATFORM_PREFIX];
 
 function matchesPrefix(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(`${prefix}/`);

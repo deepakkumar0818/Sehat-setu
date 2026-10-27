@@ -17,6 +17,7 @@
     "db:verify-rls": "tsx prisma/verify-rls.ts",
     "db:audit": "tsx prisma/audit-tail.ts",
     "auth:provision": "tsx prisma/provision-user.ts",
+    "auth:platform-admin": "tsx prisma/provision-platform-admin.ts",
     "db:p5-preflight": "tsx prisma/p5-preflight.ts",
     "db:p5-dry-run": "tsx prisma/p5-dry-run.ts",
     "db:p5-phone-dry-run": "tsx prisma/p5-phone-dry-run.ts",

@@ -292,6 +292,12 @@ describe("where a signed-in user without a staff membership goes", () => {
     expect(lookup.calls).toEqual([]);
   });
 
+  it("a super admin (no clinic) goes to the platform console; a disabled one doesn't, and it grants no clinic", async () => {
+    await expectCode(service({ identity: invitee({ platformAdmin: true }) }).requireStaffContext(), "NO_MEMBERSHIP");
+    expect(await noMembershipDestination(invitee({ platformAdmin: true }), counting(0).fn)).toBe("/platform");
+    expect(await noMembershipDestination(invitee({ platformAdmin: true, status: "DISABLED" }), counting(0).fn)).toBeNull();
+  });
+
   it("someone with no invitation keeps the normal Access Denied page", async () => {
     expect(await noMembershipDestination(invitee(), counting(0).fn)).toBeNull();
   });

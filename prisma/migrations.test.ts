@@ -19,7 +19,16 @@ describe("migrations keep every table behind RLS", () => {
   });
 
   it("gives every table at least one policy for the runtime role", () => {
-    for (const table of created) expect(allSql, `${table} has no policy`).toMatch(new RegExp(`CREATE POLICY \\w+ ON "?${table}"?[\\s\\S]*?TO sehat_app`));
+    // Tables the runtime role can't touch at all (read only through SECURITY DEFINER functions).
+    const noRuntimeAccess = new Set(["platform_admins", "platform_plans", "clinic_subscriptions", "clinic_subscription_payments"]);
+    for (const table of created) {
+      if (noRuntimeAccess.has(table)) {
+        expect(allSql, `${table} must stay closed to the runtime role`).not.toMatch(new RegExp(`GRANT [^;]* ON "?${table}"? TO [^;]*sehat_app`));
+        expect(allSql, `${table} must not be readable`).not.toMatch(new RegExp(`CREATE POLICY \\w+ ON "?${table}"?`));
+        continue;
+      }
+      expect(allSql, `${table} has no policy`).toMatch(new RegExp(`CREATE POLICY \\w+ ON "?${table}"?[\\s\\S]*?TO sehat_app`));
+    }
   });
 
   it("revokes Supabase Data API access and never grants it back", () => {

@@ -62,7 +62,11 @@ describe("no silent fallback to mock data", () => {
       const src = readFileSync(f, "utf8");
       const handlers = [...src.matchAll(/export const (GET|POST|PATCH|PUT|DELETE) =/g)].length;
       expect(handlers, f).toBeGreaterThan(0);
-      expect([...src.matchAll(/= (apiRoute|identityRoute|fileRoute|patientRoute|patientFileRoute)(<[^>]*>)?\(/g)].length, f).toBe(handlers);
+      expect([...src.matchAll(/= (apiRoute|identityRoute|fileRoute|patientRoute|patientFileRoute|platformRoute)(<[^>]*>)?\(/g)].length, f).toBe(handlers);
+      // Super admin routes exist only under /api/v1/platform/, and use nothing else.
+      const platform = /app\/api\/v1\/platform\//.test(f.replaceAll(path.sep, "/"));
+      if (/platformRoute/.test(src)) expect(platform, f).toBe(true);
+      if (platform) expect(src, f).not.toMatch(/\b(apiRoute|identityRoute|fileRoute|patientRoute|patientFileRoute)\b/);
       // identityRoute (no clinic membership required) is only for the signed-in user's own invitations.
       if (/identityRoute/.test(src)) expect(f.replaceAll(path.sep, "/"), f).toMatch(/app\/api\/v1\/me\//);
       // Patient-portal sessions (P6.3) exist only under /api/v1/portal/, and portal routes never accept a staff session.
@@ -262,7 +266,8 @@ describe("patient portal (P6.3): live data only, scoped by the server", () => {
 describe("patient onboarding (P6.4): codes link existing records; nothing else does", () => {
   it("a login with no application account is sent to the linking-code page, from staff and portal routes alike", () => {
     const src = read("server/auth/session.ts");
-    expect(src.match(/err\.code === "NOT_PROVISIONED"\) redirect\(LINK_ACCOUNT_PATH\)/g)?.length).toBe(2);
+    // Staff, portal and platform (super admin) guards.
+    expect(src.match(/err\.code === "NOT_PROVISIONED"\) redirect\(LINK_ACCOUNT_PATH\)/g)?.length).toBe(3);
     expect(read("lib/auth/routes.ts")).toMatch(/IDENTITY_PREFIXES: readonly string\[\] = \["\/invitations", "\/link-account"\]/);
   });
 

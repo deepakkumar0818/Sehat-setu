@@ -53,6 +53,8 @@ export interface Identity {
    * staff invitations — never taken from the browser.
    */
   verifiedEmail?: string | null;
+  /** A Sehat Setu super admin (platform_admins): may run the platform console. Grants nothing inside any clinic. */
+  platformAdmin?: boolean;
 }
 
 /** Everything a server-side data access needs to scope a request. */
@@ -286,7 +288,8 @@ export function homeFor(identity: Identity): "staff" | "portal" | null {
 export async function noMembershipDestination(
   identity: Identity,
   countPendingInvitations: (identity: Identity & { verifiedEmail: string }) => Promise<number>
-): Promise<"/invitations" | "/portal" | null> {
+): Promise<"/invitations" | "/portal" | "/platform" | null> {
+  if (identity.status === "ACTIVE" && identity.platformAdmin) return "/platform";
   if (identity.status === "ACTIVE" && identity.verifiedEmail) {
     const pending = await countPendingInvitations(identity as Identity & { verifiedEmail: string }).catch(() => 0);
     if (pending > 0) return "/invitations";

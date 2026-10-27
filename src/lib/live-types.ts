@@ -841,3 +841,230 @@ export interface RefundAttention {
   patientName: string;
   patientNumber: string;
 }
+
+// --- Platform (Sehat Setu super admin) -------------------------------------------------
+
+export interface PlatformClinic {
+  id: string;
+  code: string;
+  name: string;
+  email: string;
+  phone: string;
+  addressLine: string;
+  city: string;
+  state: string;
+  pincode: string;
+  status: "active" | "suspended" | "pending";
+  createdAt: string;
+  branches: number;
+  staff: number;
+  doctors: number;
+  patients: number;
+  appointmentsThisMonth: number;
+  upcomingAppointments: number;
+  /** Rupees received this month (succeeded payments). */
+  revenueThisMonth: number;
+  lastActivityAt: string | null;
+  /** "invited": hasn't signed in yet. */
+  admins: { userId: string; name: string; email: string; status: "active" | "invited" | "disabled" }[];
+  /** What the clinic pays Sehat Setu; null for a clinic not on any plan (no limits). */
+  subscription: PlatformSubscription | null;
+  /** Rupees the clinic paid Sehat Setu this month. */
+  subscriptionCollectedThisMonth: number;
+}
+
+export type BillingCycle = "monthly" | "yearly";
+/** trial: free trial still running; due_soon: paid-until within 7 days; overdue: paid-until has passed. */
+export type SubscriptionState = "trial" | "active" | "due_soon" | "overdue";
+
+export interface PlatformSubscription {
+  planId: string;
+  planKey: string;
+  planName: string;
+  billingCycle: BillingCycle;
+  /** Rupees per billing cycle (agreed with the clinic). */
+  price: number;
+  /** yyyy-MM-dd, inclusive. */
+  paidUntil: string;
+  state: SubscriptionState;
+  /** Days from today to paid-until (negative once it has passed). */
+  daysLeft: number;
+  autoSuspend: boolean;
+  graceDays: number;
+  suspendedForNonPayment: boolean;
+  notes: string | null;
+  /** null: unlimited. */
+  limits: { branches: number | null; doctors: number | null; staff: number | null };
+}
+
+export interface PlatformOverview {
+  clinics: PlatformClinic[];
+  totals: {
+    clinics: number;
+    activeClinics: number;
+    doctors: number;
+    staff: number;
+    patients: number;
+    appointmentsThisMonth: number;
+    revenueThisMonth: number;
+    /** Monthly recurring revenue: paying clinics' prices as a per-month amount (rupees). */
+    mrr: number;
+    subscriptionCollectedThisMonth: number;
+    overdue: number;
+    dueSoon: number;
+  };
+  /** Clinics suspended just now by auto-suspend (overdue past their grace days). */
+  autoSuspended: number;
+}
+
+export interface PlatformPlan {
+  id: string;
+  key: string;
+  name: string;
+  monthlyPrice: number;
+  yearlyPrice: number;
+  maxBranches: number | null;
+  maxDoctors: number | null;
+  maxStaff: number | null;
+  isActive: boolean;
+  /** Clinics on this plan. */
+  clinics: number;
+}
+
+export interface PlatformPlanInput {
+  key?: string;
+  name: string;
+  monthlyPrice: number;
+  yearlyPrice: number;
+  maxBranches: number | null;
+  maxDoctors: number | null;
+  maxStaff: number | null;
+  isActive: boolean;
+}
+
+export interface PlatformSubscriptionInput {
+  planId: string;
+  billingCycle: BillingCycle;
+  price: number;
+  paidUntil: string;
+  autoSuspend: boolean;
+  graceDays: number;
+  notes: string;
+}
+
+export type SubscriptionPaymentMethod = "cash" | "upi" | "bank_transfer" | "cheque" | "card" | "other";
+
+export interface SubscriptionPaymentInput {
+  amount: number;
+  method: SubscriptionPaymentMethod;
+  reference: string;
+  paidOn: string;
+  months: number;
+  notes: string;
+}
+
+export interface SubscriptionPayment {
+  id: string;
+  amount: number;
+  method: SubscriptionPaymentMethod;
+  reference: string | null;
+  paidOn: string;
+  months: number;
+  periodFrom: string;
+  periodTo: string;
+  notes: string | null;
+  recordedBy: string | null;
+  createdAt: string;
+  voidedAt: string | null;
+  voidReason: string | null;
+}
+
+export interface PlatformClinicDetail {
+  id: string;
+  code: string;
+  name: string;
+  email: string;
+  phone: string;
+  addressLine: string;
+  city: string;
+  state: string;
+  pincode: string;
+  status: "active" | "suspended" | "pending";
+  createdAt: string;
+  subscription: PlatformSubscription | null;
+  counts: { branches: number; doctors: number; staff: number; pendingInvitations: number; patients: number; portalPatients: number };
+  branches: { id: string; code: string; name: string; city: string; phone: string; isHeadOffice: boolean; status: "active" | "inactive" }[];
+  people: {
+    userId: string;
+    name: string;
+    email: string;
+    /** invited: hasn't signed in yet. */
+    accountStatus: "active" | "invited" | "disabled";
+    status: "active" | "inactive";
+    roles: string[];
+    isAdmin: boolean;
+    branch: string | null;
+    specialty: string | null;
+    since: string;
+  }[];
+  /** The last 6 months, oldest first; collected is rupees. */
+  usage: { month: string; appointments: number; newPatients: number; collected: number }[];
+  payments: SubscriptionPayment[];
+}
+
+export interface PlatformClinicProfileInput {
+  name: string;
+  email: string;
+  phone: string;
+  addressLine: string;
+  city: string;
+  state: string;
+  pincode: string;
+}
+
+export type PlatformActivityKind = "all" | "platform" | "problems";
+
+export interface PlatformActivityEvent {
+  id: string;
+  occurredAt: string;
+  action: string;
+  outcome: "success" | "denied" | "failure";
+  reason: string | null;
+  targetType: string | null;
+  clinicId: string | null;
+  clinicName: string | null;
+  clinicCode: string | null;
+  actorName: string | null;
+  actorEmail: string | null;
+  actorLabel: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface PlatformActivityPage {
+  events: PlatformActivityEvent[];
+  /** Pass as `before` for the next (older) page; null when there's no more. */
+  nextBefore: string | null;
+}
+
+export interface PlatformClinicInput {
+  code: string;
+  name: string;
+  email: string;
+  phone: string;
+  addressLine: string;
+  city: string;
+  state: string;
+  pincode: string;
+  branchName: string;
+  adminName: string;
+  adminEmail: string;
+}
+
+export interface PlatformClinicCreated {
+  clinicId: string;
+  adminEmail: string;
+  /** false: an existing account was made the clinic's administrator. */
+  adminIsNew: boolean;
+  invitationSent: boolean;
+  invitationProblem: string | null;
+}
