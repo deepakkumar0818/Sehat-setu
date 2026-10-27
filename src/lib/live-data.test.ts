@@ -288,8 +288,10 @@ describe("patient onboarding (P6.4): codes link existing records; nothing else d
     }
     const src = read("server/data/patient-link.ts");
     const body = src.slice(src.indexOf("export async function registerSelfPatient"));
-    // The clinic comes from the server setting; the patient never chooses it.
-    expect(body).toMatch(/app\.register_self_patient\(\$\{selfRegistrationClinic\(\)\}, \$\{authUser\.email!/);
+    // The clinic comes from the clinic link saved on the verified login (checked at
+    // sign-up) or the server setting — never from the request that creates the record.
+    expect(body).toMatch(/app\.register_self_patient\(\$\{selfRegistrationClinic\(authUser\)\}, \$\{authUser\.email!/);
+    expect(read("app/link-account/actions.ts")).not.toMatch(/clinicCode/);
     expect(read("app/link-account/page.tsx")).not.toMatch(/patientId|searchParams|clinicId/);
   });
 

@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Loader2Icon } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { Building2Icon, Loader2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Logo } from "@/components/shared/logo";
-import { signUpAction } from "./actions";
+import { normalizeClinicCode } from "@/lib/clinic-join";
+import { clinicForCodeAction, signUpAction, type JoinClinicInfo } from "./actions";
 import { VerifyEmailCode } from "./verify-email-code";
 
 const MIN_LENGTH = 12;
@@ -23,7 +25,29 @@ const ERRORS: Record<string, string> = {
   closed: "New registrations are closed right now. Please ask your clinic for help.",
   not_configured: "Sign-in isn't configured on this server.",
   unavailable: "Couldn't reach the sign-in service. Please try again.",
+  unknown_clinic: "This clinic link isn't valid any more. Ask your clinic for its current link.",
 };
+
+/**
+ * The clinic of the patient link this page was opened from (/register?clinic=CODE):
+ * undefined while it's looked up, null for none or an unusable one.
+ */
+function useJoinClinic(): { code: string | null; clinic: JoinClinicInfo | undefined } {
+  const code = normalizeClinicCode(useSearchParams().get("clinic"));
+  const [found, setFound] = useState<{ code: string; clinic: JoinClinicInfo } | null>(null);
+  useEffect(() => {
+    if (!code) return;
+    let live = true;
+    clinicForCodeAction(code)
+      .catch(() => null)
+      .then((clinic) => live && setFound({ code, clinic }));
+    return () => {
+      live = false;
+    };
+  }, [code]);
+  if (!code) return { code: null, clinic: null };
+  return { code, clinic: found?.code === code ? found.clinic : undefined };
+}
 
 type Gender = "male" | "female" | "other";
 
@@ -44,6 +68,8 @@ export function LiveRegister() {
   const [step, setStep] = useState<"details" | "otp">("details");
   const [busy, setBusy] = useState(false);
   const today = new Date().toISOString().slice(0, 10);
+  const join = useJoinClinic();
+  const badLink = join.code !== null && join.clinic === null;
 
   async function submitDetails(e: React.FormEvent) {
     e.preventDefault();
@@ -55,8 +81,9 @@ export function LiveRegister() {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return setError("Enter a valid email address.");
     if (password.length < MIN_LENGTH) return setError(`Use a password of at least ${MIN_LENGTH} characters.`);
     if (password !== confirm) return setError("The two passwords don't match.");
+    if (badLink) return setError(ERRORS.unknown_clinic);
     setBusy(true);
-    const result = await signUpAction({ name, phone, dateOfBirth, gender, email, password }).catch(() => ({ ok: false as const, error: "unavailable" as const }));
+    const result = await signUpAction({ name, phone, dateOfBirth, gender, email, password, ...(join.code ? { clinicCode: join.code } : {}) }).catch(() => ({ ok: false as const, error: "unavailable" as const }));
     setBusy(false);
     if (!result.ok) return setError(ERRORS[result.error] ?? ERRORS.unavailable);
     setPassword("");
@@ -80,6 +107,20 @@ export function LiveRegister() {
                 We&apos;ll email you a code to confirm your address. Already a patient at the clinic? After confirming, enter the linking code the front desk gives you.
               </p>
             </div>
+            {join.code && (
+              <div role="status" className={`flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-sm ${badLink ? "border-danger/30 bg-danger/5 text-danger" : "bg-muted/40 text-foreground"}`}>
+                <Building2Icon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                {join.clinic === undefined ? (
+                  <span className="text-muted-foreground">Checking your clinic link…</span>
+                ) : join.clinic ? (
+                  <span>
+                    Registering with <span className="font-medium">{join.clinic.name}</span>, {join.clinic.city}
+                  </span>
+                ) : (
+                  <span>{ERRORS.unknown_clinic}</span>
+                )}
+              </div>
+            )}
             <form onSubmit={submitDetails} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="name">Full name</Label>
@@ -125,7 +166,7 @@ export function LiveRegister() {
                   {error}
                 </p>
               )}
-              <Button type="submit" className="w-full" disabled={busy}>
+              <Button type="submit" className="w-full" disabled={busy || badLink || (join.code !== null && join.clinic === undefined)}>
                 {busy && <Loader2Icon className="h-4 w-4 animate-spin" />}
                 Create account
               </Button>

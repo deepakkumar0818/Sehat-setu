@@ -6,6 +6,7 @@ import { prisma } from "@/server/prisma";
 import type { TenantTx } from "@/server/db/tenant";
 import { DataError } from "@/server/api/errors";
 import type { PortalLinkCode, PortalLinkStatus } from "@/lib/live-types";
+import { normalizeClinicCode } from "@/lib/clinic-join";
 import { runScoped } from "./scope";
 import { isSelfRegisterResult, selfRegistrationSchema, isRedeemResult, issueLinkCodeSchema, mapPatientLinkDbError, PORTAL_LINK_PERMISSION, redeemLinkCodeSchema, type RedeemResult, type SelfRegisterResult } from "./patient-link-rules";
 
@@ -98,12 +99,16 @@ export async function redeemPortalLinkCode(authUser: VerifiedAuthUser, input: un
 }
 
 /**
- * The clinic new self-registered patients join: SELF_REGISTRATION_CLINIC, a
- * clinic code set by the operator (never the patient). Unset → the single
- * active clinic, if there is exactly one.
+ * The clinic new self-registered patients join: the clinic whose patient link
+ * (/join/<CODE>) they registered through — saved on the login at sign-up —
+ * else SELF_REGISTRATION_CLINIC, a clinic code set by the operator. Neither →
+ * the single active clinic, if there is exactly one. The saved code is the
+ * patient's to choose (the link is public); it only picks where their NEW
+ * record is created — the database still refuses an inactive clinic and any
+ * email already on a record, which only the clinic's linking code connects.
  */
-function selfRegistrationClinic(): string | null {
-  return process.env.SELF_REGISTRATION_CLINIC?.trim() || null;
+function selfRegistrationClinic(authUser: VerifiedAuthUser): string | null {
+  return normalizeClinicCode(authUser.metadata?.clinicCode) ?? (process.env.SELF_REGISTRATION_CLINIC?.trim() || null);
 }
 
 /**
@@ -123,7 +128,7 @@ export async function registerSelfPatient(authUser: VerifiedAuthUser, input: unk
     try {
       const [row] = await tx.$queryRaw<{ result: string; clinic_id: string | null }[]>`
         SELECT result, clinic_id::text AS clinic_id
-          FROM app.register_self_patient(${selfRegistrationClinic()}, ${authUser.email!.trim().toLowerCase()}, ${d.name}, ${d.phone}, ${d.dateOfBirth}::date, ${d.gender})`;
+          FROM app.register_self_patient(${selfRegistrationClinic(authUser)}, ${authUser.email!.trim().toLowerCase()}, ${d.name}, ${d.phone}, ${d.dateOfBirth}::date, ${d.gender})`;
       if (!isSelfRegisterResult(row?.result)) throw new Error("unexpected register result");
       return { result: row.result, clinicId: row.clinic_id };
     } catch (err) {

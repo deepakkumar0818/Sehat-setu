@@ -32,6 +32,7 @@ import {
 } from "@/hooks/use-platform";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ClinicJoinLink } from "@/components/shared/clinic-join-link";
 import type { BillingCycle, PlatformClinicDetail, PlatformClinicProfileInput, SubscriptionPayment, SubscriptionPaymentMethod } from "@/lib/live-types";
 import { addDays, istToday, paidUntilAfterPayment, planPrice } from "@/server/data/platform-rules";
 import { ActivityList, ClinicStatusBadge, LimitMeter, PAYMENT_METHODS, SubscriptionBadge, limitText, paidUntilText, priceText } from "./platform-shared";
@@ -99,6 +100,19 @@ export function PlatformClinicDetailView({ id, initialDialog = null }: { id: str
           </p>
         )}
       </div>
+
+      <Card>
+        <CardHeader className="space-y-1">
+          <CardTitle className="text-base">Patient registration &amp; booking link</CardTitle>
+          <CardDescription>
+            Send it to the clinic, or share it yourself. Patients who register through it join {c.name} and book with its doctors only.
+            {c.status !== "active" && " It works again once the clinic is reactivated."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ClinicJoinLink code={c.code} id="platform-join-link" />
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Subscription */}

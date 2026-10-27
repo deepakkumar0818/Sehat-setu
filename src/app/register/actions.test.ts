@@ -11,8 +11,10 @@ const audit = vi.hoisted(() => ({ events: [] as Record<string, unknown>[] }));
 vi.mock("@/server/audit", () => ({ recordAuditEvent: async (e: Record<string, unknown>) => void audit.events.push(e) }));
 const cfg = vi.hoisted(() => ({ enabled: true }));
 vi.mock("@/lib/auth/config", () => ({ isSupabaseAuthEnabled: () => cfg.enabled }));
+const dir = vi.hoisted(() => ({ findClinicByCode: vi.fn() }));
+vi.mock("@/server/data/public-directory", () => ({ findClinicByCode: dir.findClinicByCode }));
 
-const { resendEmailOtpAction, signUpAction, verifyEmailOtpAction } = await import("./actions");
+const { clinicForCodeAction, resendEmailOtpAction, signUpAction, verifyEmailOtpAction } = await import("./actions");
 const PASSWORD = "zz-correct-horse-battery";
 const DETAILS = { name: "Asha Verma", phone: "+91 98765 43210", dateOfBirth: "1990-04-12", gender: "female" } as const;
 
@@ -46,6 +48,27 @@ describe("signUpAction", () => {
     expect(supa.signUp).not.toHaveBeenCalled();
     cfg.enabled = false;
     expect(await signUpAction({ ...DETAILS, email: "a@b.co", password: PASSWORD })).toEqual({ ok: false, error: "not_configured" });
+  });
+
+  it("a clinic's patient link: saves the checked, upper-cased clinic code with the details", async () => {
+    const AAR = { id: "c1", code: "AAR", name: "Aarogya Clinic", city: "Pune" };
+    dir.findClinicByCode.mockResolvedValueOnce(AAR);
+    supa.signUp.mockResolvedValueOnce({ data: { user: { id: "new" } }, error: null });
+    expect(await signUpAction({ ...DETAILS, email: "a@b.co", password: PASSWORD, clinicCode: " aar " })).toEqual({ ok: true });
+    expect(dir.findClinicByCode).toHaveBeenCalledWith("AAR");
+    expect(supa.signUp.mock.calls[0][0].options.data).toEqual({ ...DETAILS, clinicCode: "AAR" });
+
+    // Unknown, inactive or malformed: refused before any login is created; a lookup outage is "unavailable".
+    dir.findClinicByCode.mockResolvedValueOnce(null);
+    expect(await signUpAction({ ...DETAILS, email: "a@b.co", password: PASSWORD, clinicCode: "NOPE" })).toEqual({ ok: false, error: "unknown_clinic" });
+    expect(await signUpAction({ ...DETAILS, email: "a@b.co", password: PASSWORD, clinicCode: "a b" })).toEqual({ ok: false, error: "unknown_clinic" });
+    dir.findClinicByCode.mockRejectedValueOnce(new Error("db down"));
+    expect(await signUpAction({ ...DETAILS, email: "a@b.co", password: PASSWORD, clinicCode: "AAR" })).toEqual({ ok: false, error: "unavailable" });
+    expect(supa.signUp).toHaveBeenCalledTimes(1);
+
+    dir.findClinicByCode.mockResolvedValueOnce(AAR);
+    expect(await clinicForCodeAction("aar")).toEqual({ code: "AAR", name: "Aarogya Clinic", city: "Pune" });
+    expect(await clinicForCodeAction("../x")).toBeNull();
   });
 
   it("reports weak passwords, rate limits, closed sign-up and outages (none of which reveal an account)", async () => {

@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { LetterheadView } from "@/components/shared/clinic-letterhead";
 import { PageHeader } from "@/components/shared/page-header";
+import { ClinicJoinLink } from "@/components/shared/clinic-join-link";
 import { QueryError } from "@/components/shared/query-error";
 import { useClinicProfile, useClinicSettings, useUpdateClinicProfile, useUpdateClinicSettings } from "@/hooks/use-clinic-admin";
 import { useCurrentUser } from "@/hooks/use-current-user";
@@ -52,13 +53,15 @@ export function LiveSettings() {
         </TabsList>
 
         <TabsContent value="profile" className="mt-4 space-y-5">
+          <Loaded query={settings}>{(p) => <PatientLinkCard page={p} />}</Loaded>
           <ClinicProfileCard />
           <Loaded query={settings}>{(p) => <BrandingCard page={p} />}</Loaded>
         </TabsContent>
         <TabsContent value="timings" className="mt-4">
           <Loaded query={settings}>{(p) => <TimingsCard page={p} />}</Loaded>
         </TabsContent>
-        <TabsContent value="booking" className="mt-4">
+        <TabsContent value="booking" className="mt-4 space-y-5">
+          <Loaded query={settings}>{(p) => <PatientLinkCard page={p} />}</Loaded>
           <Loaded query={settings}>{(p) => <BookingCard page={p} />}</Loaded>
         </TabsContent>
         <TabsContent value="billing" className="mt-4">
@@ -468,6 +471,25 @@ function bookingProblem(b: Pick<ClinicSettings, (typeof BOOKING)[number]>): stri
   if (!Number.isInteger(b.bookingMaxDaysAhead) || b.bookingMaxDaysAhead < 1 || b.bookingMaxDaysAhead > 180) return "Patients can book from 1 to 180 days ahead.";
   if (!Number.isInteger(b.bookingMaxUpcoming) || b.bookingMaxUpcoming < 1 || b.bookingMaxUpcoming > 20) return "Allow 1 to 20 upcoming appointments per patient.";
   return null;
+}
+
+function PatientLinkCard({ page }: { page: ClinicSettingsPage }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Patient registration &amp; booking link</CardTitle>
+        <CardDescription>
+          Share it on WhatsApp, your website or a poster. Patients who register through it join {page.clinic.name} and book with your doctors only.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <ClinicJoinLink code={page.clinic.code} />
+        {!page.settings.onlineBookingEnabled && (
+          <p className="text-xs text-muted-foreground">Online bookings are off below: patients can still register through the link, then call the clinic to book.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function BookingCard({ page }: { page: ClinicSettingsPage }) {

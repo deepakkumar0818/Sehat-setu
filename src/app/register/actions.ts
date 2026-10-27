@@ -6,6 +6,9 @@ import { createSupabaseServerClient } from "@/server/supabase";
 import { recordAuditEvent } from "@/server/audit";
 import { authCallbackUrl } from "@/lib/auth/site-url";
 import { selfRegistrationSchema } from "@/server/data/patient-link-rules";
+import { findClinicByCode } from "@/server/data/public-directory";
+import { normalizeClinicCode } from "@/lib/clinic-join";
+import { logServerError } from "@/server/log";
 
 /** Same minimum as /auth/set-password. 72 = the bcrypt input limit Supabase Auth applies. */
 const SIGN_UP_PASSWORD_MIN = 12; // not exported: a "use server" module may export async functions only
@@ -13,7 +16,7 @@ const SIGN_UP_PASSWORD_MAX = 72;
 
 export type SignUpResult =
   | { ok: true }
-  | { ok: false; error: "invalid_input" | "weak_password" | "rate_limited" | "closed" | "unavailable" | "not_configured" };
+  | { ok: false; error: "invalid_input" | "weak_password" | "rate_limited" | "closed" | "unavailable" | "not_configured" | "unknown_clinic" };
 
 const emailSchema = z.string().trim().toLowerCase().email().max(254);
 
@@ -21,8 +24,26 @@ const signUpSchema = selfRegistrationSchema
   .extend({
     email: emailSchema,
     password: z.string().min(SIGN_UP_PASSWORD_MIN).max(SIGN_UP_PASSWORD_MAX),
+    /** From the clinic's patient link (/join/<CODE>): the clinic the new record joins. */
+    clinicCode: z.string().max(10).optional(),
   })
   .strict();
+
+export type JoinClinicInfo = { code: string; name: string; city: string } | null;
+
+/** The clinic a patient link names (name and city only), or null for an unknown or inactive clinic. */
+export async function clinicForCodeAction(raw: unknown): Promise<JoinClinicInfo> {
+  if (!isSupabaseAuthEnabled()) return null;
+  const code = normalizeClinicCode(raw);
+  if (!code) return null;
+  try {
+    const clinic = await findClinicByCode(code);
+    return clinic ? { code: clinic.code, name: clinic.name, city: clinic.city } : null;
+  } catch (err) {
+    logServerError("register clinic lookup", err);
+    return null;
+  }
+}
 
 /**
  * Patient self-registration. Creates a Supabase login only, with the patient's
@@ -39,10 +60,21 @@ export async function signUpAction(input: unknown): Promise<SignUpResult> {
   if (!isSupabaseAuthEnabled()) return { ok: false, error: "not_configured" };
   const parsed = signUpSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "invalid_input" };
-  const { email, password, ...details } = parsed.data;
+  const { email, password, clinicCode: rawClinicCode, ...rest } = parsed.data;
 
   let reason: string | undefined;
   let result: SignUpResult = { ok: true };
+  // A patient link's clinic is checked now, so nobody verifies an email only to
+  // find the clinic doesn't exist; /link-account creates the record there.
+  let clinicCode: string | undefined;
+  if (rawClinicCode !== undefined) {
+    const code = normalizeClinicCode(rawClinicCode);
+    const clinic = code ? await findClinicByCode(code).catch(() => undefined) : null;
+    if (clinic === undefined) return { ok: false, error: "unavailable" };
+    if (!clinic) return { ok: false, error: "unknown_clinic" };
+    clinicCode = clinic.code;
+  }
+  const details = clinicCode ? { ...rest, clinicCode } : rest;
   try {
     const supabase = await createSupabaseServerClient();
     // The confirmation link returns to THIS app (http://localhost:3000 in

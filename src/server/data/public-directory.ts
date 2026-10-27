@@ -25,6 +25,22 @@ export async function getPublicDirectory(): Promise<PublicDirectory> {
   };
 }
 
+export interface JoinClinic {
+  id: string;
+  code: string;
+  name: string;
+  city: string;
+}
+
+/**
+ * The ACTIVE clinic a patient link (/join/<CODE>) names, from
+ * app.public_clinic_by_code (migration 20261106000000), or null.
+ */
+export async function findClinicByCode(code: string): Promise<JoinClinic | null> {
+  const rows = await prisma.$queryRaw<{ clinic: JoinClinic | null }[]>`SELECT app.public_clinic_by_code(${code}) AS clinic`;
+  return rows[0]?.clinic ?? null;
+}
+
 /** The directory, or null when it can't be read (shown as "unavailable", never as sample data). */
 export async function tryPublicDirectory(): Promise<PublicDirectory | null> {
   try {

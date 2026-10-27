@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils";
 import type { PlatformClinic, PlatformClinicInput } from "@/lib/live-types";
 import { clinicAlerts, clinicsCsv, limitsReached, sortClinics, type AlertTone, type ClinicAlert, type ClinicSort } from "@/lib/platform-insights";
 import { ClinicStatusBadge, SubscriptionBadge, priceText } from "./platform-shared";
+import { CopyClinicJoinLinkButton } from "@/components/shared/clinic-join-link";
 
 // The super admin console: every clinic on Sehat Setu, what needs attention
 // (no administrator, payment overdue, trial ending, at a plan limit, unused),
@@ -282,6 +283,7 @@ function ClinicRow({ clinic: c, onChangeStatus }: { clinic: PlatformClinic; onCh
         </div>
         <p className="text-xs text-muted-foreground">{c.city}, {c.state} · {c.phone}</p>
         <p className="text-xs text-muted-foreground">Added {formatDate(c.createdAt)}</p>
+        <CopyClinicJoinLinkButton code={c.code} clinicName={c.name} />
         {worst && (
           <p className={cn("mt-1 flex items-center gap-1 text-xs", worst.tone === "danger" ? "text-danger" : "text-warning")}>
             <AlertTriangleIcon className="h-3 w-3" aria-hidden /> {worst.text}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -40,7 +40,8 @@ export default function RegisterPage() {
   // With real authentication, patients register here (details + emailed OTP)
   // and /link-account connects or creates their record. The demo form below
   // only ever wrote to the local demo dataset.
-  if (isSupabaseAuthEnabled()) return <LiveRegister />;
+  // Suspense: LiveRegister reads ?clinic= (a clinic's patient link).
+  if (isSupabaseAuthEnabled()) return <Suspense><LiveRegister /></Suspense>;
   return <DemoRegisterPage />;
 }
 
