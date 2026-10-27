@@ -51,6 +51,15 @@ export function formatRelativeTime(iso: string): string {
   }
 }
 
+/** Like formatRelativeTime, but against the real clock: for live clinic data, not the demo. */
+export function formatTimeAgo(iso: string, now: Date = new Date()): string {
+  try {
+    return formatDistance(parseISO(iso), now, { addSuffix: true });
+  } catch {
+    return iso;
+  }
+}
+
 export function formatTime12h(time: string): string {
   const [h, m] = time.split(":").map(Number);
   const period = h >= 12 ? "PM" : "AM";

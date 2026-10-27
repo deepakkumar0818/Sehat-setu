@@ -2,8 +2,9 @@ import { ShieldCheckIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/shared/logo";
 import { PlatformNav } from "./platform-nav";
+import { ChangePasswordButton } from "./change-password-dialog";
 
-/** The super admin console's frame: its sections, who is signed in, and sign out. */
+/** The super admin console's frame: its sections, who is signed in, change password, and sign out. */
 export function PlatformShell({ name, email, children }: { name: string; email: string; children: React.ReactNode }) {
   return (
     <div className="min-h-svh bg-background">
@@ -21,6 +22,7 @@ export function PlatformShell({ name, email, children }: { name: string; email: 
               <p className="font-medium text-foreground">{name}</p>
               <p className="text-xs text-muted-foreground">{email}</p>
             </div>
+            <ChangePasswordButton />
             <form action="/auth/signout" method="post">
               <Button type="submit" variant="outline" size="sm">Sign out</Button>
             </form>

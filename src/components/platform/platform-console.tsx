@@ -18,7 +18,7 @@ import { QueryError } from "@/components/shared/query-error";
 import { SearchInput } from "@/components/shared/search-input";
 import { StatCard } from "@/components/shared/stat-card";
 import { useCreatePlatformClinic, usePlatformOverview, useResendClinicAdminInvite, useSetPlatformClinicStatus } from "@/hooks/use-platform";
-import { formatCurrency, formatDate, formatRelativeTime } from "@/lib/format";
+import { formatCurrency, formatDate, formatTimeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { PlatformClinic, PlatformClinicInput } from "@/lib/live-types";
 import { ClinicStatusBadge, SubscriptionBadge, priceText } from "./platform-shared";
@@ -193,7 +193,7 @@ export function PlatformConsole() {
                   <TableCell className="text-right">{c.patients}</TableCell>
                   <TableCell className="text-right">{c.appointmentsThisMonth}{c.upcomingAppointments > 0 && <span className="block text-xs text-muted-foreground">{c.upcomingAppointments} upcoming</span>}</TableCell>
                   <TableCell className="text-right">{formatCurrency(c.revenueThisMonth)}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{c.lastActivityAt ? formatRelativeTime(c.lastActivityAt) : "Never"}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{c.lastActivityAt ? formatTimeAgo(c.lastActivityAt) : "Never"}</TableCell>
                   <TableCell>
                     <ClinicStatusBadge status={c.status} />
                   </TableCell>
