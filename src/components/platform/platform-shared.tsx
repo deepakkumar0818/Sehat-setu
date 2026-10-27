@@ -99,6 +99,7 @@ const PLATFORM_ACTIONS: Record<string, string> = {
 const OTHER_ACTIONS: Record<string, string> = {
   "access.denied": "Was refused access",
   "auth.account_linked": "Signed in for the first time",
+  "auth.password_changed": "Changed their password",
   "patient.self_register_failed": "Patient sign-up failed",
   "patient.link_code_redeem_failed": "Patient link code failed",
   "patient.email_link_failed": "Patient email link failed",

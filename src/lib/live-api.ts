@@ -303,6 +303,11 @@ export interface PortalBookingRequest {
 }
 
 export const liveApi = {
+  account: {
+    /** The current password is checked on the server before the new one is saved; other devices are signed out. */
+    changePassword: (input: { currentPassword: string; newPassword: string }) =>
+      apiPost<{ ok: true; otherSessionsSignedOut: boolean }>("/api/v1/me/password", input),
+  },
   platform: {
     overview: () => apiGet<PlatformOverview>("/api/v1/platform/clinics"),
     createClinic: (input: PlatformClinicInput) => apiPost<PlatformClinicCreated>("/api/v1/platform/clinics", input),

@@ -65,10 +65,10 @@ export function PlatformSettings({ name, email }: { name: string; email: string 
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base"><KeyRoundIcon className="h-4 w-4" aria-hidden /> Change password</CardTitle>
-            <CardDescription>At least {MIN_PASSWORD} characters. You stay signed in on this device.</CardDescription>
+            <CardDescription>Enter your current password, then choose a new one (at least {MIN_PASSWORD} characters).</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChangePasswordForm idPrefix="settings" />
+            <ChangePasswordForm email={email} idPrefix="settings" />
           </CardContent>
         </Card>
 

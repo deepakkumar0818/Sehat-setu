@@ -107,10 +107,9 @@ describe("the app still fits the policy", () => {
 
   it("the only browser-side network client is Supabase Auth (covered by connect-src)", () => {
     const clients = sources.filter((s) => /createSupabaseBrowserClient\(|new WebSocket\(|EventSource\(/.test(s.src)).map((s) => s.rel).sort();
-    // Password changes and "sign out everywhere": patient portal and super admin settings.
+    // Patient portal password change, and "sign out everywhere" in super admin settings.
     expect(clients).toEqual([
       "app/auth/set-password/page.tsx",
-      "components/platform/change-password-dialog.tsx",
       "components/platform/platform-settings.tsx",
       "components/portal/live-portal-settings.tsx",
       "lib/supabase/browser.ts",

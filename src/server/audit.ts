@@ -15,6 +15,7 @@ export type AuditAction =
   | "auth.sign_out"
   | "auth.account_linked"
   | "auth.password_reset_requested"
+  | "auth.password_changed"
   | "auth.sign_up_requested"
   | "auth.sign_up_otp_verified"
   | "access.denied";
